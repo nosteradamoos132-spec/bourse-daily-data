@@ -1,0 +1,64 @@
+name: Test BRSAPI Index
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch market index JSON
+        env:
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BRSAPI_KEY:-}" ]; then
+            echo "::error::Missing repository secret BRSAPI_KEY"
+            exit 1
+          fi
+
+          mkdir -p output
+          curl --fail --silent --show-error --location \
+            --connect-timeout 15 --max-time 45 \
+            --retry 2 --retry-delay 2 \
+            --get 'https://api.brsapi.ir/Tsetmc/Index.php' \
+            --data-urlencode "key=${BRSAPI_KEY}" \
+            --output output/index.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("output/index.json")
+          data = json.loads(path.read_text(encoding="utf-8-sig"))
+
+          if not isinstance(data, (dict, list)):
+              raise SystemExit("JSON received, but its root is not an object or array.")
+
+          print("JSON response received and parsed successfully.")
+          if isinstance(data, dict):
+              print("Top-level fields:", ", ".join(data.keys()))
+              for key in (
+                  "date", "time", "state", "index", "index_change",
+                  "index_equalWeight", "index_equalWeight_change",
+                  "mv", "tno", "tval", "tvol"
+              ):
+                  if key in data:
+                      print(f"{key}: {data[key]}")
+          else:
+              print("Top-level array items:", len(data))
+
+          print("Response size:", path.stat().st_size, "bytes")
+          PY
+
+      - name: Save raw JSON response
+        uses: actions/upload-artifact@v4
+        with:
+          name: brsapi-index-result
+          path: output/index.json
+          if-no-files-found: error
+          retention-days: 3
