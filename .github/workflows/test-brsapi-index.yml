@@ -21,92 +21,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Check Iran market calendar
-        id: market-day
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from datetime import datetime
-          from pathlib import Path
-          from zoneinfo import ZoneInfo
-
-          def gregorian_to_jalali(gy, gm, gd):
-              month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-              if gy > 1600:
-                  jy = 979
-                  gy -= 1600
-              else:
-                  jy = 0
-                  gy -= 621
-
-              gy2 = gy + 1 if gm > 2 else gy
-              days = (
-                  365 * gy
-                  + (gy2 + 3) // 4
-                  - (gy2 + 99) // 100
-                  + (gy2 + 399) // 400
-                  - 80
-                  + gd
-                  + month_days[gm - 1]
-              )
-
-              jy += 33 * (days // 12053)
-              days %= 12053
-              jy += 4 * (days // 1461)
-              days %= 1461
-
-              if days > 365:
-                  jy += (days - 1) // 365
-                  days = (days - 1) % 365
-
-              if days < 186:
-                  jm = 1 + days // 31
-                  jd = 1 + days % 31
-              else:
-                  jm = 7 + (days - 186) // 30
-                  jd = 1 + (days - 186) % 30
-
-              return jy, jm, jd
-
-          now = datetime.now(ZoneInfo("Asia/Tehran"))
-          jalali_year, jalali_month, jalali_day = gregorian_to_jalali(
-              now.year, now.month, now.day
-          )
-          jalali_date = f"{jalali_year:04d}-{jalali_month:02d}-{jalali_day:02d}"
-
-          should_run = True
-          reason = "Trading day"
-
-          if now.weekday() in (3, 4):
-              should_run = False
-              reason = "Thursday/Friday weekend in Iran"
-          else:
-              calendar_path = Path("calendar/holidays-1405.json")
-              calendar = json.loads(calendar_path.read_text(encoding="utf-8"))
-
-              if jalali_year != calendar["year"]:
-                  should_run = False
-                  reason = (
-                      f"No official holiday calendar configured for Jalali year "
-                      f"{jalali_year}; refusing to fetch until its calendar is added"
-                  )
-              elif jalali_date in set(calendar["holidays"]):
-                  should_run = False
-                  reason = "Official Iranian public holiday"
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if should_run else 'false'}\n")
-
-          print(f"Tehran date: {jalali_date}")
-          print(f"Decision: {'RUN' if should_run else 'SKIP'}")
-          print(f"Reason: {reason}")
-          if not should_run:
-              print(f"::notice::{reason}")
-          PY
-
       - name: Fetch market index JSON
-        if: steps.market-day.outputs.run == 'true'
         env:
           BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
         run: |
@@ -153,30 +68,28 @@ jobs:
           path = Path("output/index.json")
           data = json.loads(path.read_text(encoding="utf-8-sig"))
 
-          if not isinstance(data, (dict, list)):
-              raise SystemExit("JSON received, but its root is not an object or array.")
+          if not isinstance(data, dict):
+              raise SystemExit("Expected the BRSAPI response to be a JSON object.")
 
           print("JSON response received and parsed successfully.")
-          if isinstance(data, dict):
-              print("Top-level fields:", ", ".join(data.keys()))
-              for key in (
-                  "date", "time", "state", "index", "index_change",
-                  "index_equalWeight", "index_equalWeight_change",
-                  "mv", "tno", "tval", "tvol"
-              ):
-                  if key in data:
-                      print(f"{key}: {data[key]}")
-          else:
-              print("Top-level array items:", len(data))
-
+          print("Top-level fields:", ", ".join(data.keys()))
+          for key in (
+              "date", "time", "state", "index", "index_change",
+              "index_equalWeight", "index_equalWeight_change",
+              "mv", "tno", "tval", "tvol"
+          ):
+              if key in data:
+                  print(f"{key}: {data[key]}")
           print("Response size:", path.stat().st_size, "bytes")
           PY
 
-      - name: Archive daily response
-        if: steps.market-day.outputs.run == 'true' && success()
+      - name: Check for unchanged or duplicate market data
+        id: archive
+        if: success()
         run: |
           python - <<'PY'
           import json
+          import os
           import re
           from pathlib import Path
 
@@ -193,16 +106,39 @@ jobs:
           archive_dir = Path("archive")
           archive_dir.mkdir(parents=True, exist_ok=True)
           destination = archive_dir / f"index-{api_date}.json"
+          previous_files = sorted(archive_dir.glob("index-*.json"))
 
           if destination.exists():
-              print(f"Archive already exists for {api_date}; preserving the existing daily record.")
+              reason = f"Duplicate API date {api_date}; no new archive record created."
+              created = False
+          elif previous_files:
+              latest_file = previous_files[-1]
+              previous_data = json.loads(latest_file.read_text(encoding="utf-8-sig"))
+
+              if data == previous_data:
+                  reason = (
+                      f"API response is identical to the latest archived data "
+                      f"({latest_file.name}); likely a market-closed day. "
+                      "No new archive record created."
+                  )
+                  created = False
+              else:
+                  destination.write_bytes(source.read_bytes())
+                  reason = f"New market data archived as {destination}."
+                  created = True
           else:
               destination.write_bytes(source.read_bytes())
-              print(f"Created daily archive: {destination}")
+              reason = f"First market data record archived as {destination}."
+              created = True
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"created={'true' if created else 'false'}\n")
+
+          print(reason)
           PY
 
-      - name: Commit daily archive to repository
-        if: steps.market-day.outputs.run == 'true' && success()
+      - name: Commit new daily archive
+        if: steps.archive.outputs.created == 'true'
         run: |
           set -euo pipefail
           git add archive/
@@ -216,7 +152,7 @@ jobs:
           git push
 
       - name: Save API response artifact
-        if: steps.market-day.outputs.run == 'true' && always()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: brsapi-index-result
