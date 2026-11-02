@@ -187,7 +187,7 @@ jobs:
               raise SystemExit("Cannot archive response: expected a JSON object.")
 
           api_date = data.get("date")
-          if not isinstance(api_date, str) or not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", api_date):
+          if not isinstance(api_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
               raise SystemExit(f"Cannot archive response: unexpected API date: {api_date!r}")
 
           archive_dir = Path("archive")
