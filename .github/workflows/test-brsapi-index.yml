@@ -3,8 +3,8 @@ name: Daily BRSAPI Index Archive
 on:
   workflow_dispatch:
   schedule:
-    # GitHub cron uses UTC: 14:30 UTC = 18:00 Iran time (UTC+03:30).
-    - cron: "30 14 * * *"
+    # Runs Saturday through Wednesday in Iran: 14:30 UTC = 18:00 Iran time (UTC+03:30).
+    - cron: "30 14 * * 0-3,6"
 
 permissions:
   contents: write
