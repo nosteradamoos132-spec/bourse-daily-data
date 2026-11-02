@@ -9,7 +9,8 @@ on:
   workflow_dispatch:
   schedule:
     # Every 5 minutes, offset away from the start of the hour.
-    - cron: "2-59/5 * * * *"
+    # 22:35 Tehran time, Saturday through Wednesday (19:05 UTC).
+    - cron: "5 19 * * 0-3,6"
 
 permissions:
   contents: read
