@@ -205,16 +205,16 @@ jobs:
                   previous_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
               )
 
-              if canonical_data == canonical_previous:
+              content_matches_previous = canonical_data == canonical_previous
+              destination.write_bytes(source.read_bytes())
+              if content_matches_previous:
                   reason = (
-                      f"Every JSON field matches the latest archived record "
-                      f"({latest_file.name}); no new archive record created."
+                      f"New API date {api_date} archived as {destination}. "
+                      f"All JSON fields match {latest_file.name}; date remains the unique record key."
                   )
-                  created = False
               else:
-                  destination.write_bytes(source.read_bytes())
                   reason = f"New market data archived as {destination}."
-                  created = True
+              created = True
           else:
               destination.write_bytes(source.read_bytes())
               reason = f"First market data record archived as {destination}."
