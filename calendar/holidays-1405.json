@@ -1,0 +1,33 @@
+{
+  "year": 1405,
+  "calendar_source": "Official Iranian calendar 1405, prepared by the University of Tehran Institute of Geophysics; holiday dates cross-checked against the published holiday JSON",
+  "source_url": "https://calendar.ut.ac.ir/documents/2139738/7092644/Calendar-1405.pdf",
+  "holidays": [
+    "1405-01-01",
+    "1405-01-02",
+    "1405-01-03",
+    "1405-01-04",
+    "1405-01-12",
+    "1405-01-13",
+    "1405-01-25",
+    "1405-03-06",
+    "1405-03-14",
+    "1405-03-15",
+    "1405-04-03",
+    "1405-04-04",
+    "1405-05-13",
+    "1405-05-21",
+    "1405-05-22",
+    "1405-05-30",
+    "1405-06-08",
+    "1405-08-22",
+    "1405-10-02",
+    "1405-10-16",
+    "1405-11-04",
+    "1405-11-22",
+    "1405-12-09",
+    "1405-12-19",
+    "1405-12-20",
+    "1405-12-29"
+  ]
+}
