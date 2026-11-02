@@ -3,8 +3,9 @@ name: Daily BRSAPI Index Archive
 on:
   workflow_dispatch:
   schedule:
-    # Saturday through Wednesday in Iran, 18:00 Tehran time (14:30 UTC).
-    - cron: "30 14 * * 0-3,6"
+    # Saturday through Wednesday in Iran, 18:00 Tehran time.
+    - cron: "0 18 * * 0-3,6"
+      timezone: "Asia/Tehran"
 
 permissions:
   contents: write
