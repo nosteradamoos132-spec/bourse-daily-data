@@ -1,0 +1,39 @@
+name: Scheduler Trigger Probe
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 5 minutes, offset away from the start of the hour.
+    - cron: "2-59/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  scheduler-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Record trigger and clock times
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+
+          now_utc = datetime.now(timezone.utc)
+          now_tehran = now_utc.astimezone(ZoneInfo("Asia/Tehran"))
+
+          print("Scheduler probe started successfully.")
+          print(f"Trigger event: {os.environ.get('EVENT_NAME')}")
+          print(f"Scheduled expression: {os.environ.get('SCHEDULE') or 'manual run'}")
+          print(f"Run ID: {os.environ.get('RUN_ID')}")
+          print(f"Run number: {os.environ.get('RUN_NUMBER')}")
+          print(f"UTC time: {now_utc.isoformat()}")
+          print(f"Tehran time: {now_tehran.isoformat()}")
+          PY
