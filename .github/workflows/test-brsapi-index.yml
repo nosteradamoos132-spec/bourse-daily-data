@@ -21,7 +21,90 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Check Iran market calendar
+        id: market-day
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          def gregorian_to_jalali(gy, gm, gd):
+              month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+              if gy > 1600:
+                  jy = 979
+                  gy -= 1600
+              else:
+                  jy = 0
+                  gy -= 621
+
+              gy2 = gy + 1 if gm > 2 else gy
+              days = (
+                  365 * gy
+                  + (gy2 + 3) // 4
+                  - (gy2 + 99) // 100
+                  + (gy2 + 399) // 400
+                  - 80
+                  + gd
+                  + month_days[gm - 1]
+              )
+
+              jy += 33 * (days // 12053)
+              days %= 12053
+              jy += 4 * (days // 1461)
+              days %= 1461
+
+              if days > 365:
+                  jy += (days - 1) // 365
+                  days = (days - 1) % 365
+
+              if days < 186:
+                  jm = 1 + days // 31
+                  jd = 1 + days % 31
+              else:
+                  jm = 7 + (days - 186) // 30
+                  jd = 1 + (days - 186) % 30
+
+              return jy, jm, jd
+
+          now = datetime.now(ZoneInfo("Asia/Tehran"))
+          jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+          jalali_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
+
+          should_run = True
+          reason = "Trading day"
+
+          if now.weekday() in (3, 4):
+              should_run = False
+              reason = "Thursday/Friday weekend in Iran"
+          else:
+              calendar_path = Path(f"calendar/holidays-{jy}.json")
+              if not calendar_path.exists():
+                  should_run = False
+                  reason = f"Holiday calendar for Jalali year {jy} is not configured"
+              else:
+                  calendar = json.loads(calendar_path.read_text(encoding="utf-8"))
+                  if jy != calendar.get("year"):
+                      should_run = False
+                      reason = f"Calendar year mismatch for {jalali_date}"
+                  elif jalali_date in set(calendar.get("holidays", [])):
+                      should_run = False
+                      reason = "Official Iranian public holiday"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"run={'true' if should_run else 'false'}\\n")
+
+          print(f"Tehran date: {jalali_date}")
+          print(f"Decision: {'FETCH' if should_run else 'SKIP'}")
+          print(f"Reason: {reason}")
+          if not should_run:
+              print(f"::notice::{reason}")
+          PY
+
       - name: Fetch market index JSON
+        if: steps.market-day.outputs.run == 'true'
         env:
           BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
         run: |
@@ -85,7 +168,7 @@ jobs:
 
       - name: Check for unchanged or duplicate market data
         id: archive
-        if: success()
+        if: steps.market-day.outputs.run == 'true' && success()
         run: |
           python - <<'PY'
           import json
@@ -108,18 +191,24 @@ jobs:
           destination = archive_dir / f"index-{api_date}.json"
           previous_files = sorted(archive_dir.glob("index-*.json"))
 
+          canonical_data = json.dumps(
+              data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+          )
+
           if destination.exists():
               reason = f"Duplicate API date {api_date}; no new archive record created."
               created = False
           elif previous_files:
               latest_file = previous_files[-1]
               previous_data = json.loads(latest_file.read_text(encoding="utf-8-sig"))
+              canonical_previous = json.dumps(
+                  previous_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+              )
 
-              if data == previous_data:
+              if canonical_data == canonical_previous:
                   reason = (
-                      f"API response is identical to the latest archived data "
-                      f"({latest_file.name}); likely a market-closed day. "
-                      "No new archive record created."
+                      f"Every JSON field matches the latest archived record "
+                      f"({latest_file.name}); no new archive record created."
                   )
                   created = False
               else:
@@ -138,7 +227,7 @@ jobs:
           PY
 
       - name: Commit new daily archive
-        if: steps.archive.outputs.created == 'true'
+        if: steps.market-day.outputs.run == 'true' && steps.archive.outputs.created == 'true'
         run: |
           set -euo pipefail
           git add archive/
@@ -152,7 +241,7 @@ jobs:
           git push
 
       - name: Save API response artifact
-        if: always()
+        if: steps.market-day.outputs.run == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: brsapi-index-result
