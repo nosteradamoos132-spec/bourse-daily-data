@@ -7,8 +7,8 @@ on:
       - .github/workflows/test-brsapi-index.yml
   workflow_dispatch:
   schedule:
-    # Saturday through Wednesday in Iran, 18:00 Tehran time (14:30 UTC).
-    - cron: "30 14 * * 0-3,6"
+    # Temporary automation test: every day at 00:40 Tehran time (21:10 UTC).
+    - cron: "10 21 * * *"
 
 permissions:
   contents: write
