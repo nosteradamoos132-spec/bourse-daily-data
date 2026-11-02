@@ -1,16 +1,26 @@
-name: Test BRSAPI Index
+name: Daily BRSAPI Index Archive
 
 on:
   workflow_dispatch:
+  schedule:
+    # GitHub cron uses UTC: 14:30 UTC = 18:00 Iran time (UTC+03:30).
+    - cron: "30 14 * * *"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: daily-brsapi-index
+  cancel-in-progress: false
 
 jobs:
   fetch-index:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
       - name: Fetch market index JSON
         env:
           BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
@@ -77,9 +87,52 @@ jobs:
           print("Response size:", path.stat().st_size, "bytes")
           PY
 
-      - name: Save API response
+      - name: Archive daily response
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          source = Path("output/index.json")
+          data = json.loads(source.read_text(encoding="utf-8-sig"))
+
+          if not isinstance(data, dict):
+              raise SystemExit("Cannot archive response: expected a JSON object.")
+
+          api_date = data.get("date")
+          if not isinstance(api_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
+              raise SystemExit(f"Cannot archive response: unexpected API date: {api_date!r}")
+
+          archive_dir = Path("archive")
+          archive_dir.mkdir(parents=True, exist_ok=True)
+          destination = archive_dir / f"index-{api_date}.json"
+
+          if destination.exists():
+              print(f"Archive already exists for {api_date}; preserving the existing daily record.")
+          else:
+              destination.write_bytes(source.read_bytes())
+              print(f"Created daily archive: {destination}")
+          PY
+
+      - name: Commit daily archive to repository
+        if: success()
+        run: |
+          set -euo pipefail
+          git add archive/
+          if git diff --cached --quiet; then
+            echo "No new archive file to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Archive BRSAPI index data"
+          git push
+
+      - name: Save API response artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: brsapi-index-result
           path: output/index.json
