@@ -10,7 +10,8 @@ on:
   schedule:
     # Every 5 minutes, offset away from the start of the hour.
     # 22:35 Tehran time, Saturday through Wednesday (19:05 UTC).
-    - cron: "5 19 * * 0-3,6"
+    - cron: "35 22 * * 0-3,6"
+      timezone: "Asia/Tehran"
 
 permissions:
   contents: read
