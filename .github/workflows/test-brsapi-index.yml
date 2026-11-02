@@ -1,6 +1,10 @@
 name: Daily BRSAPI Index Archive
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/test-brsapi-index.yml
   workflow_dispatch:
   schedule:
     # Saturday through Wednesday in Iran, 18:00 Tehran time (14:30 UTC).
