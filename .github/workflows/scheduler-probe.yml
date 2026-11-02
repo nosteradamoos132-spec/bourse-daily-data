@@ -8,9 +8,8 @@ on:
       - .github/workflows/scheduler-probe.yml
   workflow_dispatch:
   schedule:
-    # Every 5 minutes, offset away from the start of the hour.
-    # 22:35 Tehran time, Saturday through Wednesday (19:05 UTC).
-    - cron: "35 22 * * 0-3,6"
+    # Test every 5 minutes using Tehran local time.
+    - cron: "*/5 * * * *"
       timezone: "Asia/Tehran"
 
 permissions:
