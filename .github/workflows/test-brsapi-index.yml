@@ -27,6 +27,7 @@ jobs:
             --retry 2 --retry-delay 2 \
             --get 'https://api.brsapi.ir/Tsetmc/Index.php' \
             --data-urlencode "key=${BRSAPI_KEY}" \
+            --data-urlencode "type=1" \
             --output output/index.json \
             --write-out '%{http_code}')
 
