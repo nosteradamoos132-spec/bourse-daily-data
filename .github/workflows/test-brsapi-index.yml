@@ -22,12 +22,33 @@ jobs:
           fi
 
           mkdir -p output
-          curl --fail --silent --show-error --location \
+          http_status=$(curl --silent --show-error --location \
             --connect-timeout 15 --max-time 45 \
             --retry 2 --retry-delay 2 \
             --get 'https://api.brsapi.ir/Tsetmc/Index.php' \
             --data-urlencode "key=${BRSAPI_KEY}" \
-            --output output/index.json
+            --output output/index.json \
+            --write-out '%{http_code}')
+
+          echo "HTTP status: ${http_status}"
+          if [ "${http_status}" != "200" ]; then
+            echo "::error::BRSAPI returned HTTP ${http_status}"
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("output/index.json")
+          body = path.read_bytes() if path.exists() else b""
+          key = os.environ.get("BRSAPI_KEY", "").encode()
+          if key:
+              body = body.replace(key, b"[REDACTED]")
+          safe_body = body.decode("utf-8", errors="replace")
+          print("Sanitized response body (first 4000 characters):")
+          print(safe_body[:4000] if safe_body else "[empty response body]")
+          path.write_text(safe_body, encoding="utf-8")
+          PY
+            exit 1
+          fi
 
           python - <<'PY'
           import json
@@ -55,10 +76,11 @@ jobs:
           print("Response size:", path.stat().st_size, "bytes")
           PY
 
-      - name: Save raw JSON response
+      - name: Save API response
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: brsapi-index-result
           path: output/index.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 3
