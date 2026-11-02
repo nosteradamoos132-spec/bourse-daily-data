@@ -1,6 +1,11 @@
 name: Scheduler Trigger Probe
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/scheduler-probe.yml
   workflow_dispatch:
   schedule:
     # Every 5 minutes, offset away from the start of the hour.
