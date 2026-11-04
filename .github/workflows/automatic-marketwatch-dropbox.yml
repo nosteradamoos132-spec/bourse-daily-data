@@ -107,7 +107,8 @@ jobs:
           source_url = "http://members.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
           output_dir = Path("marketwatch-download")
           output_dir.mkdir(parents=True, exist_ok=True)
-          destination = output_dir / f"MarketWatchPlus-${{ steps.market-day.outputs.jalali_date }}.xls"
+          jalali_date = os.environ["JALALI_DATE"]
+          destination = output_dir / f"MarketWatchPlus-{jalali_date}.xls"
 
           max_attempts = 12
           wait_seconds = 60
