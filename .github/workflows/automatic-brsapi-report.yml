@@ -57,7 +57,7 @@ jobs:
               raise SystemExit("API response is not a JSON object.")
 
           api_date = data.get("date")
-          if not isinstance(api_date, str) or not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", api_date):
+          if not isinstance(api_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
               raise SystemExit(f"Invalid or missing report date: {api_date!r}")
 
           state = data.get("state")
@@ -86,7 +86,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"finish={'true' if finish else 'false'}\\n")
               output.write(f"created={'true' if created else 'false'}\\n")
-              output.write(f"result={result}\\n")
+              output.write(f"result={result}\n")
           PY
 
       - name: Commit the new report
