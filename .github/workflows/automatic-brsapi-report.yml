@@ -42,7 +42,7 @@ jobs:
           print(f"Run now: {due}")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if due else 'false'}\\n")
+              output.write(f"run={'true' if due else 'false'}\n")
           PY
 
       - name: Request report and check whether it is ready or duplicated
