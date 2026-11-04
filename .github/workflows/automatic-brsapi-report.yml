@@ -1,19 +1,20 @@
-name: GitHub Schedule Trigger Test
+name: GitHub External Trigger Test
 
 on:
-  schedule:
-    # Diagnostic only: run every five minutes, away from the top of the hour.
-    - cron: "2-59/5 * * * *"
+  push:
+    paths:
+      - "triggers/daily.txt"
 
 permissions: {}
 
 jobs:
-  verify-schedule:
+  verify-trigger:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Confirm GitHub started this workflow automatically
+      - name: Confirm the external daily trigger started this workflow
         run: |
           echo "Event: ${GITHUB_EVENT_NAME}"
+          echo "Commit: ${GITHUB_SHA}"
           echo "Started at UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          test "${GITHUB_EVENT_NAME}" = "schedule"
+          test "${GITHUB_EVENT_NAME}" = "push"
