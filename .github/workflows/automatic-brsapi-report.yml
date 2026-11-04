@@ -1,20 +1,272 @@
-name: GitHub External Trigger Test
+name: Daily BRSAPI Report Archive
 
 on:
   push:
+    branches: [main]
     paths:
       - "triggers/daily.txt"
 
-permissions: {}
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-brsapi-report
+  cancel-in-progress: false
 
 jobs:
-  verify-trigger:
+  fetch-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 360
     steps:
-      - name: Confirm the external daily trigger started this workflow
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Iran trading calendar
+        id: market-day
         run: |
-          echo "Event: ${GITHUB_EVENT_NAME}"
-          echo "Commit: ${GITHUB_SHA}"
-          echo "Started at UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          test "${GITHUB_EVENT_NAME}" = "push"
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          def gregorian_to_jalali(gy, gm, gd):
+              month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+              if gy > 1600:
+                  jy = 979
+                  gy -= 1600
+              else:
+                  jy = 0
+                  gy -= 621
+              gy2 = gy + 1 if gm > 2 else gy
+              days = (
+                  365 * gy
+                  + (gy2 + 3) // 4
+                  - (gy2 + 99) // 100
+                  + (gy2 + 399) // 400
+                  - 80
+                  + gd
+                  + month_days[gm - 1]
+              )
+              jy += 33 * (days // 12053)
+              days %= 12053
+              jy += 4 * (days // 1461)
+              days %= 1461
+              if days > 365:
+                  jy += (days - 1) // 365
+                  days = (days - 1) % 365
+              if days < 186:
+                  jm = 1 + days // 31
+                  jd = 1 + days % 31
+              else:
+                  jm = 7 + (days - 186) // 30
+                  jd = 1 + (days - 186) % 30
+              return jy, jm, jd
+
+          now = datetime.now(ZoneInfo("Asia/Tehran"))
+          jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+          jalali_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
+
+          should_run = now.weekday() not in (3, 4)
+          reason = "Trading day" if should_run else "Thursday/Friday weekend in Iran"
+
+          if should_run:
+              calendar_path = Path(f"calendar/holidays-{jy}.json")
+              if not calendar_path.exists():
+                  raise SystemExit(f"Holiday calendar is missing: {calendar_path}")
+              calendar = json.loads(calendar_path.read_text(encoding="utf-8"))
+              if calendar.get("year") != jy:
+                  raise SystemExit(f"Holiday calendar year mismatch for {jalali_date}")
+              if jalali_date in set(calendar.get("holidays", [])):
+                  should_run = False
+                  reason = "Official Iranian public holiday"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"run={'true' if should_run else 'false'}\\n")
+
+          print(f"Tehran date: {jalali_date}")
+          print(f"Decision: {'FETCH' if should_run else 'SKIP'}")
+          print(f"Reason: {reason}")
+          PY
+
+      - name: Keep requesting until today's final report is received
+        id: report
+        if: steps.market-day.outputs.run == 'true'
+        env:
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import math
+          import os
+          import re
+          import sys
+          import time
+          from datetime import datetime
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from zoneinfo import ZoneInfo
+
+          api_key = os.environ.get("BRSAPI_KEY", "")
+          if not api_key:
+              raise SystemExit("Missing repository secret BRSAPI_KEY")
+
+          def gregorian_to_jalali(gy, gm, gd):
+              month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+              if gy > 1600:
+                  jy = 979
+                  gy -= 1600
+              else:
+                  jy = 0
+                  gy -= 621
+              gy2 = gy + 1 if gm > 2 else gy
+              days = (
+                  365 * gy
+                  + (gy2 + 3) // 4
+                  - (gy2 + 99) // 100
+                  + (gy2 + 399) // 400
+                  - 80
+                  + gd
+                  + month_days[gm - 1]
+              )
+              jy += 33 * (days // 12053)
+              days %= 12053
+              jy += 4 * (days // 1461)
+              days %= 1461
+              if days > 365:
+                  jy += (days - 1) // 365
+                  days = (days - 1) % 365
+              if days < 186:
+                  jm = 1 + days // 31
+                  jd = 1 + days % 31
+              else:
+                  jm = 7 + (days - 186) // 30
+                  jd = 1 + (days - 186) % 30
+              return jy, jm, jd
+
+          tehran = ZoneInfo("Asia/Tehran")
+          now = datetime.now(tehran)
+          jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+          expected_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
+          print(f"Waiting for final report dated {expected_date} (Tehran time).")
+
+          required_numeric = (
+              "index", "index_change", "index_equalWeight",
+              "index_equalWeight_change", "mv", "tno", "tval", "tvol"
+          )
+          archive_dir = Path("archive")
+          archive_dir.mkdir(parents=True, exist_ok=True)
+          destination = archive_dir / f"index-{expected_date}.json"
+
+          endpoint = "https://api.brsapi.ir/Tsetmc/Index.php"
+          request_url = f"{endpoint}?{urlencode({'key': api_key, 'type': '1'})}"
+          started = time.monotonic()
+          max_wait_seconds = 6 * 60 * 60
+          poll_interval_seconds = 5 * 60
+          attempt_number = 0
+
+          while time.monotonic() - started < max_wait_seconds:
+              attempt_number += 1
+              try:
+                  request = Request(
+                      request_url,
+                      headers={
+                          "Accept": "application/json",
+                          "User-Agent": "bourse-daily-data-archive/1.0"
+                      }
+                  )
+                  with urlopen(request, timeout=45) as response:
+                      body = response.read()
+                      status = response.status
+
+                  if status != 200:
+                      raise RuntimeError(f"Unexpected HTTP status: {status}")
+
+                  data = json.loads(body.decode("utf-8-sig"))
+                  if not isinstance(data, dict):
+                      raise ValueError("API response is not a JSON object.")
+
+                  api_date = data.get("date")
+                  state = data.get("state")
+                  report_time = data.get("time")
+
+                  numeric_ok = True
+                  for field in required_numeric:
+                      value = data.get(field)
+                      if isinstance(value, bool) or not isinstance(value, (int, float)):
+                          numeric_ok = False
+                          break
+                      if not math.isfinite(float(value)):
+                          numeric_ok = False
+                          break
+
+                  report_ready = (
+                      api_date == expected_date
+                      and state == "بسته"
+                      and isinstance(report_time, str)
+                      and re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", report_time)
+                      and numeric_ok
+                  )
+
+                  print(
+                      f"Attempt {attempt_number}: HTTP 200; "
+                      f"date={api_date!r}; time={report_time!r}; "
+                      f"state={state!r}; numeric_fields_valid={numeric_ok}"
+                  )
+
+                  if report_ready:
+                      if destination.exists():
+                          print(
+                              f"Duplicate report date {expected_date}: "
+                              f"{destination.name} already exists. No file was saved."
+                          )
+                          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                              output.write("created=false\\n")
+                              output.write(f"report_date={expected_date}\\n")
+                              output.write("result=duplicate\\n")
+                          sys.exit(0)
+
+                      destination.write_bytes(body)
+                      print(f"Final report received and saved: {destination}")
+                      with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                          output.write("created=true\\n")
+                          output.write(f"report_date={expected_date}\\n")
+                          output.write("result=saved\\n")
+                      sys.exit(0)
+
+                  print(
+                      f"Report not final/current/complete yet; "
+                      f"expected date={expected_date}, state='بسته'."
+                  )
+
+              except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
+                  print(f"Attempt {attempt_number} failed: {type(exc).__name__}: {exc}")
+              except Exception as exc:
+                  print(f"Unexpected attempt error: {type(exc).__name__}: {exc}")
+
+              remaining = max_wait_seconds - (time.monotonic() - started)
+              if remaining <= 0:
+                  break
+              time.sleep(min(poll_interval_seconds, remaining))
+
+          raise SystemExit(
+              f"No valid final report for {expected_date} was received "
+              f"within the six-hour retry window. The workflow failed rather than "
+              f"pretending that a report was archived."
+          )
+          PY
+
+      - name: Commit the new daily report
+        if: steps.report.outputs.created == 'true'
+        env:
+          REPORT_DATE: ${{ steps.report.outputs.report_date }}
+        run: |
+          set -euo pipefail
+          git add "archive/index-${REPORT_DATE}.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Archive BRSAPI report ${REPORT_DATE}"
+          git push
