@@ -83,7 +83,7 @@ jobs:
                   reason = "Official Iranian public holiday"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if should_run else 'false'}\\n")
+              output.write(f"run={'true' if should_run else 'false'}\n")
 
           print(f"Tehran date: {jalali_date}")
           print(f"Decision: {'FETCH' if should_run else 'SKIP'}")
@@ -207,7 +207,7 @@ jobs:
                       api_date == expected_date
                       and state == "بسته"
                       and isinstance(report_time, str)
-                      and re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", report_time)
+                      and re.fullmatch(r"\d{2}:\d{2}:\d{2}", report_time)
                       and numeric_ok
                   )
 
@@ -224,17 +224,17 @@ jobs:
                               f"{destination.name} already exists. No file was saved."
                           )
                           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                              output.write("created=false\\n")
-                              output.write(f"report_date={expected_date}\\n")
-                              output.write("result=duplicate\\n")
+                              output.write("created=false\n")
+                              output.write(f"report_date={expected_date}\n")
+                              output.write("result=duplicate\n")
                           sys.exit(0)
 
                       destination.write_bytes(body)
                       print(f"Final report received and saved: {destination}")
                       with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                          output.write("created=true\\n")
-                          output.write(f"report_date={expected_date}\\n")
-                          output.write("result=saved\\n")
+                          output.write("created=true\n")
+                          output.write(f"report_date={expected_date}\n")
+                          output.write("result=saved\n")
                       sys.exit(0)
 
                   print(
