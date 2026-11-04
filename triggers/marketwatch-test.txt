@@ -1,1 +1,0 @@
-One-time isolated MarketWatch Dropbox test trigger.
