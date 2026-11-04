@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "triggers/daily.txt"
+      - "triggers/marketwatch-test.txt"
 
 permissions:
   contents: read
