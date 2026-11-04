@@ -2,7 +2,7 @@ name: Automatic BRSAPI Report Test
 
 on:
   schedule:
-    # First run at 22:58 Tehran on 2026-11-04, then retry every 5 minutes.
+    # Poll every five minutes; a UTC guard prevents any run before the requested start time.
     - cron: "3-58/5 * * * *"
 
 permissions:
@@ -21,8 +21,33 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Wait until the requested first-run time and enforce five-minute retries
+        id: schedule
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+
+          first_run = datetime.fromisoformat("2026-11-04T19:37:18+00:00")
+          now = datetime.now(timezone.utc)
+          elapsed = (now - first_run).total_seconds()
+
+          # Cron runs every five minutes. Permit only the first minute of each
+          # five-minute window, beginning at the requested first-run timestamp.
+          due = elapsed >= 0 and int(elapsed) % 300 < 60
+
+          print(f"Current UTC time: {now.isoformat()}")
+          print(f"Requested start UTC: {first_run.isoformat()}")
+          print(f"Elapsed seconds: {elapsed:.1f}")
+          print(f"Run now: {due}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"run={'true' if due else 'false'}\\n")
+          PY
+
       - name: Request report and check whether it is ready or duplicated
         id: report
+        if: steps.schedule.outputs.run == 'true'
         env:
           BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
         run: |
@@ -90,7 +115,7 @@ jobs:
           PY
 
       - name: Commit the new report
-        if: steps.report.outputs.created == 'true'
+        if: steps.schedule.outputs.run == 'true' && steps.report.outputs.created == 'true'
         run: |
           set -euo pipefail
           git add archive/
@@ -100,7 +125,7 @@ jobs:
           git push
 
       - name: Stop future scheduled retries after receiving a final report
-        if: steps.report.outputs.finish == 'true'
+        if: steps.schedule.outputs.run == 'true' && steps.report.outputs.finish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
