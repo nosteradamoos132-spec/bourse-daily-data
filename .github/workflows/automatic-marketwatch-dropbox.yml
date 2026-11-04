@@ -83,8 +83,8 @@ jobs:
                   reason = "Official Iranian public holiday"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if should_run else 'false'}\\n")
-              output.write(f"jalali_date={jalali_date}\\n")
+              output.write(f"run={'true' if should_run else 'false'}\n")
+              output.write(f"jalali_date={jalali_date}\n")
 
           print(f"Tehran date: {jalali_date}")
           print(f"Decision: {'DOWNLOAD' if should_run else 'SKIP'}")
