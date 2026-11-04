@@ -1,0 +1,284 @@
+name: Daily TSETMC MarketWatch to Dropbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "triggers/daily.txt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-marketwatch-dropbox
+  cancel-in-progress: false
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Iran trading calendar
+        id: market-day
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          def gregorian_to_jalali(gy, gm, gd):
+              month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+              if gy > 1600:
+                  jy = 979
+                  gy -= 1600
+              else:
+                  jy = 0
+                  gy -= 621
+              gy2 = gy + 1 if gm > 2 else gy
+              days = (
+                  365 * gy
+                  + (gy2 + 3) // 4
+                  - (gy2 + 99) // 100
+                  + (gy2 + 399) // 400
+                  - 80
+                  + gd
+                  + month_days[gm - 1]
+              )
+              jy += 33 * (days // 12053)
+              days %= 12053
+              jy += 4 * (days // 1461)
+              days %= 1461
+              if days > 365:
+                  jy += (days - 1) // 365
+                  days = (days - 1) % 365
+              if days < 186:
+                  jm = 1 + days // 31
+                  jd = 1 + days % 31
+              else:
+                  jm = 7 + (days - 186) // 30
+                  jd = 1 + (days - 186) % 30
+              return jy, jm, jd
+
+          now = datetime.now(ZoneInfo("Asia/Tehran"))
+          jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+          jalali_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
+
+          should_run = now.weekday() not in (3, 4)
+          reason = "Trading day" if should_run else "Thursday/Friday weekend in Iran"
+
+          if should_run:
+              calendar_path = Path(f"calendar/holidays-{jy}.json")
+              if not calendar_path.exists():
+                  raise SystemExit(f"Holiday calendar is missing: {calendar_path}")
+              calendar = json.loads(calendar_path.read_text(encoding="utf-8"))
+              if calendar.get("year") != jy:
+                  raise SystemExit(f"Holiday calendar year mismatch for {jalali_date}")
+              if jalali_date in set(calendar.get("holidays", [])):
+                  should_run = False
+                  reason = "Official Iranian public holiday"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"run={'true' if should_run else 'false'}\\n")
+              output.write(f"jalali_date={jalali_date}\\n")
+
+          print(f"Tehran date: {jalali_date}")
+          print(f"Decision: {'DOWNLOAD' if should_run else 'SKIP'}")
+          print(f"Reason: {reason}")
+          PY
+
+      - name: Download MarketWatch Excel and upload to Dropbox
+        if: steps.market-day.outputs.run == 'true'
+        env:
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+          JALALI_DATE: ${{ steps.market-day.outputs.jalali_date }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          app_key = os.environ.get("DROPBOX_APP_KEY", "")
+          app_secret = os.environ.get("DROPBOX_APP_SECRET", "")
+          refresh_token = os.environ.get("DROPBOX_REFRESH_TOKEN", "")
+          jalali_date = os.environ["JALALI_DATE"]
+
+          missing = [
+              name for name, value in (
+                  ("DROPBOX_APP_KEY", app_key),
+                  ("DROPBOX_APP_SECRET", app_secret),
+                  ("DROPBOX_REFRESH_TOKEN", refresh_token),
+              ) if not value
+          ]
+          if missing:
+              raise SystemExit("Missing GitHub repository secret(s): " + ", ".join(missing))
+
+          def read_json_response(request, timeout=60):
+              try:
+                  with urlopen(request, timeout=timeout) as response:
+                      raw = response.read()
+                      return response.status, raw, response.headers
+              except HTTPError as exc:
+                  raw = exc.read()
+                  raise RuntimeError(
+                      f"HTTP {exc.code} from {request.full_url}: "
+                      f"{raw[:500].decode('utf-8', errors='replace')}"
+                  ) from None
+              except (URLError, TimeoutError) as exc:
+                  raise RuntimeError(
+                      f"Network error for {request.full_url}: {type(exc).__name__}"
+                  ) from None
+
+          # Exchange the long-lived refresh token for a short-lived access token.
+          basic = base64.b64encode(
+              f"{app_key}:{app_secret}".encode("utf-8")
+          ).decode("ascii")
+          token_request = Request(
+              "https://api.dropbox.com/oauth2/token",
+              data=urlencode({
+                  "grant_type": "refresh_token",
+                  "refresh_token": refresh_token,
+              }).encode("utf-8"),
+              headers={
+                  "Authorization": f"Basic {basic}",
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "User-Agent": "bourse-daily-data-archive/1.0",
+              },
+              method="POST",
+          )
+
+          try:
+              _, token_body, _ = read_json_response(token_request)
+              token_data = json.loads(token_body.decode("utf-8"))
+          except Exception as exc:
+              raise SystemExit(f"Dropbox token refresh failed: {exc}") from None
+
+          access_token = token_data.get("access_token")
+          if not access_token:
+              raise SystemExit("Dropbox token endpoint did not return an access token.")
+          print("Dropbox access token refreshed successfully.")
+
+          # The API path is relative to this app's dedicated App Folder.
+          dropbox_path = f"/MarketWatchPlus-{jalali_date}.xls"
+
+          # Do not overwrite an existing day's file.
+          metadata_request = Request(
+              "https://api.dropboxapi.com/2/files/get_metadata",
+              data=json.dumps({"path": dropbox_path}).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {access_token}",
+                  "Content-Type": "application/json",
+                  "User-Agent": "bourse-daily-data-archive/1.0",
+              },
+              method="POST",
+          )
+          try:
+              _, metadata_body, _ = read_json_response(metadata_request)
+              metadata = json.loads(metadata_body.decode("utf-8"))
+              print(
+                  f"Duplicate: {dropbox_path} already exists in Dropbox "
+                  f"(size={metadata.get('size', 'unknown')}). No overwrite performed."
+              )
+              sys.exit(0)
+          except RuntimeError as exc:
+              message = str(exc)
+              if "HTTP 409" not in message or "path/not_found" not in message:
+                  raise SystemExit(f"Dropbox metadata check failed: {message}") from None
+
+          # Fetch the original TSETMC Excel download without parsing or modifying it.
+          source_url = "http://members.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
+          download_request = Request(
+              source_url,
+              headers={
+                  "Accept": "application/vnd.ms-excel, application/octet-stream, */*",
+                  "User-Agent": "Mozilla/5.0 (compatible; BourseDailyArchive/1.0)",
+              },
+              method="GET",
+          )
+          try:
+              with urlopen(download_request, timeout=120) as response:
+                  excel_bytes = response.read()
+                  content_type = response.headers.get("Content-Type", "")
+                  content_disposition = response.headers.get("Content-Disposition", "")
+                  status = response.status
+          except HTTPError as exc:
+              raise SystemExit(f"TSETMC download failed with HTTP {exc.code}.") from None
+          except (URLError, TimeoutError) as exc:
+              raise SystemExit(
+                  f"TSETMC download network error: {type(exc).__name__}."
+              ) from None
+
+          if status != 200:
+              raise SystemExit(f"TSETMC returned unexpected HTTP status {status}.")
+          if len(excel_bytes) < 256:
+              raise SystemExit(
+                  f"TSETMC response is too small to be a valid Excel export "
+                  f"({len(excel_bytes)} bytes)."
+              )
+
+          prefix = excel_bytes[:512].lstrip().lower()
+          if (
+              ("text/html" in content_type.lower())
+              and (prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html"))
+          ):
+              raise SystemExit(
+                  "TSETMC returned an HTML page instead of an Excel download. "
+                  "Nothing was uploaded."
+              )
+
+          print(
+              f"TSETMC download received: {len(excel_bytes)} bytes; "
+              f"Content-Type={content_type or 'not supplied'}; "
+              f"Content-Disposition={content_disposition or 'not supplied'}."
+          )
+
+          # Upload the exact bytes returned by TSETMC.
+          upload_args = {
+              "path": dropbox_path,
+              "mode": "add",
+              "autorename": False,
+              "mute": True,
+              "strict_conflict": True,
+          }
+          upload_request = Request(
+              "https://content.dropboxapi.com/2/files/upload",
+              data=excel_bytes,
+              headers={
+                  "Authorization": f"Bearer {access_token}",
+                  "Content-Type": "application/octet-stream",
+                  "Dropbox-API-Arg": json.dumps(
+                      upload_args, separators=(",", ":")
+                  ),
+                  "User-Agent": "bourse-daily-data-archive/1.0",
+              },
+              method="POST",
+          )
+          try:
+              _, upload_body, _ = read_json_response(upload_request, timeout=120)
+              upload_data = json.loads(upload_body.decode("utf-8"))
+          except Exception as exc:
+              raise SystemExit(f"Dropbox file upload failed: {exc}") from None
+
+          uploaded_size = upload_data.get("size")
+          if uploaded_size != len(excel_bytes):
+              raise SystemExit(
+                  f"Dropbox size verification failed: downloaded={len(excel_bytes)}, "
+                  f"uploaded={uploaded_size}."
+              )
+
+          print(
+              f"SUCCESS: Original TSETMC Excel file saved to Dropbox App Folder "
+              f"as {upload_data.get('path_display', dropbox_path)} "
+              f"({uploaded_size} bytes)."
+          )
+          PY
