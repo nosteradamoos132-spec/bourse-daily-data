@@ -193,6 +193,28 @@ jobs:
                   state = data.get("state")
                   report_time = data.get("time")
 
+                  print(
+                      f"Attempt {attempt_number}: HTTP 200; "
+                      f"API report date={api_date!r}; time={report_time!r}; "
+                      f"state={state!r}"
+                  )
+
+                  # The API's own date identifies the report day. Check the archive
+                  # immediately, before waiting for today's report to become final.
+                  if isinstance(api_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
+                      observed_destination = archive_dir / f"index-{api_date}.json"
+                      if observed_destination.exists():
+                          print(
+                              f"Duplicate report date {api_date}: "
+                              f"{observed_destination.name} already exists. "
+                              f"No file was saved."
+                          )
+                          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                              output.write("created=false\n")
+                              output.write(f"report_date={api_date}\n")
+                              output.write("result=duplicate\n")
+                          sys.exit(0)
+
                   numeric_ok = True
                   for field in required_numeric:
                       value = data.get(field)
@@ -211,24 +233,7 @@ jobs:
                       and numeric_ok
                   )
 
-                  print(
-                      f"Attempt {attempt_number}: HTTP 200; "
-                      f"date={api_date!r}; time={report_time!r}; "
-                      f"state={state!r}; numeric_fields_valid={numeric_ok}"
-                  )
-
                   if report_ready:
-                      if destination.exists():
-                          print(
-                              f"Duplicate report date {expected_date}: "
-                              f"{destination.name} already exists. No file was saved."
-                          )
-                          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                              output.write("created=false\n")
-                              output.write(f"report_date={expected_date}\n")
-                              output.write("result=duplicate\n")
-                          sys.exit(0)
-
                       destination.write_bytes(body)
                       print(f"Final report received and saved: {destination}")
                       with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -239,7 +244,8 @@ jobs:
 
                   print(
                       f"Report not final/current/complete yet; "
-                      f"expected date={expected_date}, state='بسته'."
+                      f"expected date={expected_date}, state='بسته', "
+                      f"numeric_fields_valid={numeric_ok}."
                   )
 
               except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
