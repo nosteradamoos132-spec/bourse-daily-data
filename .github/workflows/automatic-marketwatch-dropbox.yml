@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - "triggers/marketwatch.txt"
+  schedule:
+    - cron: "0 14,15 * * *"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: daily-marketwatch-download
@@ -16,12 +18,12 @@ concurrency:
 jobs:
   download-marketwatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Check Iran trading calendar
+      - name: Check Iran trading calendar and Berlin schedule
         id: market-day
         run: |
           python - <<'PY'
@@ -64,12 +66,27 @@ jobs:
                   jd = 1 + (days - 186) % 30
               return jy, jm, jd
 
-          now = datetime.now(ZoneInfo("Asia/Tehran"))
-          jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+          tehran_now = datetime.now(ZoneInfo("Asia/Tehran"))
+          berlin_now = datetime.now(ZoneInfo("Europe/Berlin"))
+          jy, jm, jd = gregorian_to_jalali(
+              tehran_now.year, tehran_now.month, tehran_now.day
+          )
           jalali_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
 
-          should_run = now.weekday() != 4
-          reason = "Trading day" if should_run else "Friday weekend in Iran"
+          should_run = True
+          reason = "Trading day"
+
+          if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+              if berlin_now.hour != 16:
+                  should_run = False
+                  reason = (
+                      "This UTC schedule slot does not correspond to "
+                      "16:00 Europe/Berlin"
+                  )
+
+          if should_run and tehran_now.weekday() == 4:
+              should_run = False
+              reason = "Friday weekend in Iran"
 
           if should_run:
               calendar_path = Path(f"calendar/holidays-{jy}.json")
@@ -83,35 +100,72 @@ jobs:
                   reason = "Official Iranian public holiday"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if should_run else 'false'}\n")
-              output.write(f"jalali_date={jalali_date}\n")
+              output.write(f"run={'true' if should_run else 'false'}\\n")
+              output.write(f"jalali_date={jalali_date}\\n")
 
           print(f"Tehran date: {jalali_date}")
-          print(f"Decision: {'DOWNLOAD' if should_run else 'SKIP'}")
+          print(f"Berlin time: {berlin_now.isoformat()}")
+          print(f"Decision: {'CONTINUE' if should_run else 'SKIP'}")
           print(f"Reason: {reason}")
           PY
 
-      - name: Download the complete TSETMC MarketWatch Excel file
+      - name: Check whether this date is already archived
+        id: archive-check
         if: steps.market-day.outputs.run == 'true'
         env:
           JALALI_DATE: ${{ steps.market-day.outputs.jalali_date }}
         run: |
           python - <<'PY'
+          import os
+          from pathlib import Path
+
+          jalali_date = os.environ["JALALI_DATE"]
+          year, month, _ = jalali_date.split("-")
+          archive_path = (
+              Path("archive")
+              / "marketwatch"
+              / year
+              / month
+              / f"MarketWatchPlus-{jalali_date}.xlsx"
+          )
+
+          duplicate = archive_path.is_file()
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"duplicate={'true' if duplicate else 'false'}\\n")
+              output.write(f"archive_path={archive_path.as_posix()}\\n")
+
+          if duplicate:
+              print(f"DUPLICATE: {archive_path} already exists.")
+              print("Download skipped; the existing archive file is preserved.")
+          else:
+              print(f"NEW DATE: {jalali_date}")
+              print(f"Archive destination: {archive_path}")
+          PY
+
+      - name: Download and validate the complete TSETMC MarketWatch workbook
+        id: download
+        if: steps.market-day.outputs.run == 'true' && steps.archive-check.outputs.duplicate == 'false'
+        env:
+          JALALI_DATE: ${{ steps.market-day.outputs.jalali_date }}
+          ARCHIVE_PATH: ${{ steps.archive-check.outputs.archive_path }}
+        run: |
+          python - <<'PY'
           import hashlib
           import os
           import time
+          from io import BytesIO
           from pathlib import Path
-          from urllib.error import HTTPError, URLError
           from urllib.request import Request, urlopen
+          from zipfile import BadZipFile, ZipFile, is_zipfile
 
           source_url = "https://old.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
-          output_dir = Path("marketwatch-download")
-          output_dir.mkdir(parents=True, exist_ok=True)
-          jalali_date = os.environ["JALALI_DATE"]
-          destination = output_dir / f"MarketWatchPlus-{jalali_date}.xls"
+          destination = Path(os.environ["ARCHIVE_PATH"])
+          destination.parent.mkdir(parents=True, exist_ok=True)
 
-          max_attempts = 12
+          max_attempts = 6
           wait_seconds = 60
+          request_timeout = 600
           last_error = None
 
           for attempt in range(1, max_attempts + 1):
@@ -119,67 +173,101 @@ jobs:
                   request = Request(
                       source_url,
                       headers={
-                          "Accept": "application/vnd.ms-excel, application/octet-stream, */*",
+                          "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, application/octet-stream, */*",
                           "User-Agent": "Mozilla/5.0 (compatible; BourseDailyArchive/1.0)",
                           "Cache-Control": "no-cache",
                       },
                       method="GET",
                   )
 
-                  with urlopen(request, timeout=180) as response:
+                  with urlopen(request, timeout=request_timeout) as response:
                       status = response.status
                       body = response.read()
                       content_type = response.headers.get("Content-Type", "")
-                      content_disposition = response.headers.get("Content-Disposition", "")
 
                   if status != 200:
                       raise RuntimeError(f"Unexpected HTTP status {status}")
 
-                  if len(body) < 256:
-                      raise RuntimeError(f"Response too small: {len(body)} bytes")
-
-                  prefix = body[:8192].lstrip().lower()
-                  signature_ok = (
-                      body.startswith(bytes.fromhex("D0CF11E0A1B11AE1"))
-                      or body.startswith(b"PK\\x03\\x04")
-                      or b"<workbook" in prefix
-                      or (
-                          b"<html" in prefix
-                          and ".xls" in content_disposition.lower()
-                          and "excel" in content_type.lower()
-                      )
-                  )
-
-                  if not signature_ok:
-                      sample = prefix[:100].decode("ascii", errors="replace")
+                  if len(body) < 10000:
                       raise RuntimeError(
-                          "Response does not look like an Excel file. "
+                          f"Response is too small to be the complete workbook: {len(body)} bytes"
+                      )
+
+                  if not is_zipfile(BytesIO(body)):
+                      sample = body[:160].decode("utf-8", errors="replace")
+                      raise RuntimeError(
+                          "Response is not an XLSX ZIP workbook. "
                           f"Content-Type={content_type!r}; sample={sample!r}"
                       )
 
-                  destination.write_bytes(body)
+                  with ZipFile(BytesIO(body)) as workbook:
+                      bad_member = workbook.testzip()
+                      names = set(workbook.namelist())
+                      has_worksheet = any(
+                          name.startswith("xl/worksheets/sheet")
+                          and name.endswith(".xml")
+                          for name in names
+                      )
+
+                      if bad_member is not None:
+                          raise BadZipFile(f"Corrupt workbook member: {bad_member}")
+
+                      if "xl/workbook.xml" not in names or not has_worksheet:
+                          raise RuntimeError(
+                              "The response is a ZIP file but is missing Excel workbook contents."
+                          )
+
+                  temporary_path = destination.with_name(destination.name + ".tmp")
+                  temporary_path.write_bytes(body)
+                  temporary_path.replace(destination)
+
                   digest = hashlib.sha256(body).hexdigest()
+                  with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                      output.write(f"file_size={len(body)}\\n")
+                      output.write(f"sha256={digest}\\n")
 
                   print(f"DOWNLOAD SUCCESS on attempt {attempt}")
-                  print(f"File: {destination.name}")
+                  print(f"File: {destination.as_posix()}")
                   print(f"Bytes received: {len(body)}")
                   print(f"Content-Type: {content_type or 'not supplied'}")
-                  print(f"Content-Disposition: {content_disposition or 'not supplied'}")
-                  print(f"First 8 bytes: {body[:8].hex()}")
                   print(f"SHA256: {digest}")
-                  print("The complete response body was read before success was reported.")
+                  print("XLSX ZIP integrity and workbook structure validated.")
                   break
 
-              except (HTTPError, URLError, TimeoutError, RuntimeError, OSError) as exc:
+              except Exception as exc:
                   last_error = f"{type(exc).__name__}: {exc}"
                   print(f"Attempt {attempt}/{max_attempts} failed: {last_error}")
 
                   if attempt == max_attempts:
                       raise SystemExit(
-                          f"MarketWatch Excel download failed after {max_attempts} attempts. "
+                          f"MarketWatch download failed after {max_attempts} attempts. "
                           f"Last error: {last_error}"
                       ) from None
 
-                  print(f"Waiting {wait_seconds} seconds before the next attempt.")
+                  print(f"Waiting {wait_seconds} seconds before retrying.")
                   time.sleep(wait_seconds)
           PY
+
+      - name: Commit the daily workbook to the repository archive
+        if: steps.market-day.outputs.run == 'true' && steps.archive-check.outputs.duplicate == 'false'
+        env:
+          JALALI_DATE: ${{ steps.market-day.outputs.jalali_date }}
+          ARCHIVE_PATH: ${{ steps.archive-check.outputs.archive_path }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$ARCHIVE_PATH"
+
+          if git diff --cached --quiet; then
+              echo "No new archive file is staged."
+              exit 1
+          fi
+
+          git commit -m "Archive TSETMC MarketWatch $JALALI_DATE"
+          git push
+
+      - name: Report duplicate date
+        if: steps.market-day.outputs.run == 'true' && steps.archive-check.outputs.duplicate == 'true'
+        run: |
+          echo "The MarketWatch archive for this date already exists."
+          echo "No download or new archive file was created."
