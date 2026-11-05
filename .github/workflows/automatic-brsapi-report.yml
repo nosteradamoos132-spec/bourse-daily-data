@@ -68,7 +68,7 @@ jobs:
           jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
           jalali_date = f"{jy:04d}-{jm:02d}-{jd:02d}"
 
-          should_run = now.weekday() not in (3, 4)
+          should_run = now.weekday() != 4
           reason = "Trading day" if should_run else "Thursday/Friday weekend in Iran"
 
           if should_run:
