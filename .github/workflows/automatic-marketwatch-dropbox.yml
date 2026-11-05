@@ -6,7 +6,8 @@ on:
     paths:
       - "triggers/marketwatch.txt"
   schedule:
-    - cron: "0 14,15 * * *"
+    - cron: "0 16 * * *"
+      timezone: "Europe/Berlin"
 
 permissions:
   contents: write
@@ -75,14 +76,6 @@ jobs:
 
           should_run = True
           reason = "Trading day"
-
-          if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
-              if berlin_now.hour != 16:
-                  should_run = False
-                  reason = (
-                      "This UTC schedule slot does not correspond to "
-                      "16:00 Europe/Berlin"
-                  )
 
           if should_run and tehran_now.weekday() == 4:
               should_run = False
