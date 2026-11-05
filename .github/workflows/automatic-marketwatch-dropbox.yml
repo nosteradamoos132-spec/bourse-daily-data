@@ -104,7 +104,7 @@ jobs:
           from urllib.error import HTTPError, URLError
           from urllib.request import Request, urlopen
 
-          source_url = "http://members.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
+          source_url = "https://old.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
           output_dir = Path("marketwatch-download")
           output_dir.mkdir(parents=True, exist_ok=True)
           jalali_date = os.environ["JALALI_DATE"]
