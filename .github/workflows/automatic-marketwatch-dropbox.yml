@@ -100,8 +100,8 @@ jobs:
                   reason = "Official Iranian public holiday"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"run={'true' if should_run else 'false'}\\n")
-              output.write(f"jalali_date={jalali_date}\\n")
+              output.write(f"run={'true' if should_run else 'false'}\n")
+              output.write(f"jalali_date={jalali_date}\n")
 
           print(f"Tehran date: {jalali_date}")
           print(f"Berlin time: {berlin_now.isoformat()}")
@@ -132,8 +132,8 @@ jobs:
           duplicate = archive_path.is_file()
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"duplicate={'true' if duplicate else 'false'}\\n")
-              output.write(f"archive_path={archive_path.as_posix()}\\n")
+              output.write(f"duplicate={'true' if duplicate else 'false'}\n")
+              output.write(f"archive_path={archive_path.as_posix()}\n")
 
           if duplicate:
               print(f"DUPLICATE: {archive_path} already exists.")
@@ -223,8 +223,8 @@ jobs:
 
                   digest = hashlib.sha256(body).hexdigest()
                   with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                      output.write(f"file_size={len(body)}\\n")
-                      output.write(f"sha256={digest}\\n")
+                      output.write(f"file_size={len(body)}\n")
+                      output.write(f"sha256={digest}\n")
 
                   print(f"DOWNLOAD SUCCESS on attempt {attempt}")
                   print(f"File: {destination.as_posix()}")
