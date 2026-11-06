@@ -113,11 +113,8 @@ class Book:
         if "xl/sharedStrings.xml" in self.files:
             ss = ET.fromstring(self.files["xl/sharedStrings.xml"])
             self.shared = ["".join(t.text or "" for t in si.iter(q("t"))) for si in ss.findall(q("si"))]
-        wb_debug = ET.fromstring(self.files["xl/workbook.xml"])
-        sheet_names = [sh.attrib.get("name") for sh in wb_debug.find(q("sheets")).findall(q("sheet"))]
         self.sheet_path = resolve_sheet(self.files, sheet_name)
         self.root = ET.fromstring(self.files[self.sheet_path])
-        print(f"WORKBOOK SHEETS: {sheet_names}; selected path: {self.sheet_path}", flush=True)
 
     def value(self, cell):
         if cell is None:
@@ -163,27 +160,12 @@ class Book:
                 clean = re.sub(r"[\s\u200c]+", "", val.translate(DIGITS))
                 if "تاریخ" in clean and "تاریخدرج" not in clean:
                     date_hits.append((rn, cn))
-                if need_index and "آخرین" in clean and "واحد" in clean:
+                if need_index and ("شاخصکل" in clean or ("آخرین" in clean and "واحد" in clean)):
                     index_hits.append((rn, cn))
         if not date_hits:
             raise RuntimeError("Date header not found within first 40 rows.")
         if need_index and not index_hits:
-            rows = self.rows()
-            for debug_row, debug_cells in rows.items():
-                if debug_row <= 40:
-                    if debug_row <= 3:
-                        debug_text = {
-                            col_letters(cn): {
-                                "value": self.value(cell),
-                                "type": cell.attrib.get("t"),
-                                "attrs": dict(cell.attrib),
-                                "raw": ET.tostring(cell, encoding="unicode")[:220]
-                            }
-                            for cn, cell in debug_cells.items()
-                        }
-                        if debug_text:
-                            print(f"HEADER CELL DIAGNOSTIC row={debug_row}: {debug_text}", flush=True)
-            raise RuntimeError("Index header 'آخرین (واحد)' not found within first 40 rows.")
+            raise RuntimeError("Index value header 'شاخص کل' (or 'آخرین (واحد)') not found within first 40 rows.")
         dr, dc = date_hits[0]
         if need_index:
             ir, ic = index_hits[0]
