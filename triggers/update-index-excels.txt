@@ -5,3 +5,5 @@ Diagnostic retry after inspecting real workbook header labels.
 Run header inspection after fixing diagnostic initialization.
 
 Print workbook sheet names and full header cell metadata for diagnosis.
+
+Run reconciliation using the verified 'شاخص کل' and 'تاریخ شمسی' columns.
