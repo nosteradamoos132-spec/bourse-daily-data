@@ -165,6 +165,11 @@ class Book:
         if not date_hits:
             raise RuntimeError("Date header not found within first 40 rows.")
         if need_index and not index_hits:
+            for debug_row, debug_cells in rows.items():
+                if debug_row <= 40:
+                    debug_text = {col_letters(cn): self.value(cell) for cn, cell in debug_cells.items() if isinstance(self.value(cell), str)}
+                    if debug_text:
+                        print(f"HEADER DIAGNOSTIC row={debug_row}: {debug_text}", flush=True)
             raise RuntimeError("Index header 'آخرین (واحد)' not found within first 40 rows.")
         dr, dc = date_hits[0]
         if need_index:
