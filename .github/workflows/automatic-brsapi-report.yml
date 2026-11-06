@@ -2,7 +2,8 @@ name: Daily BRSAPI Report Archive
 
 on:
   schedule:
-    - cron: "0 17 * * *"
+    - cron: "0 16 * * *"
+      timezone: "Europe/Berlin"
   workflow_dispatch:
   push:
     branches: [main]
