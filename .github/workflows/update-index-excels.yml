@@ -1,0 +1,53 @@
+name: Update index and trading workbooks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "triggers/update-index-excels.txt"
+  workflow_run:
+    workflows: ["Daily BRSAPI Report Archive"]
+    branches: [main]
+    types: [completed]
+  schedule:
+    - cron: "0 15 * * 0-4,6"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-index-and-trading-workbooks
+  cancel-in-progress: false
+
+jobs:
+  update-workbooks:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Reconcile every archived JSON date with both workbooks
+        run: python scripts/update_index_excels.py
+
+      - name: Commit the updated workbooks
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "archive/شاخص کل تا 12 آبان 1405.xlsx" "archive/ارزش و حجم معاملات روزانه.xlsx"
+
+          if git diff --cached --quiet; then
+            echo "No workbook changes; all archived dates are already present."
+            exit 0
+          fi
+
+          git commit -m "Update daily index and trading metrics workbooks"
+          git push
