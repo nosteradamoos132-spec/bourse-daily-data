@@ -2,7 +2,7 @@ name: Daily BRSAPI Report Archive
 
 on:
   schedule:
-    - cron: "30 14 * * *"
+    - cron: "0 17 * * *"
   workflow_dispatch:
   push:
     branches: [main]
