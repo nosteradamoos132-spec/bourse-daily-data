@@ -165,6 +165,7 @@ class Book:
         if not date_hits:
             raise RuntimeError("Date header not found within first 40 rows.")
         if need_index and not index_hits:
+            rows = self.rows()
             for debug_row, debug_cells in rows.items():
                 if debug_row <= 40:
                     debug_text = {col_letters(cn): self.value(cell) for cn, cell in debug_cells.items() if isinstance(self.value(cell), str)}
