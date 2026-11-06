@@ -1,1 +1,3 @@
 Manual test: reconcile every archived JSON date with both independent Excel workbooks.
+
+Diagnostic retry after inspecting real workbook header labels.
