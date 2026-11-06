@@ -113,8 +113,11 @@ class Book:
         if "xl/sharedStrings.xml" in self.files:
             ss = ET.fromstring(self.files["xl/sharedStrings.xml"])
             self.shared = ["".join(t.text or "" for t in si.iter(q("t"))) for si in ss.findall(q("si"))]
+        wb_debug = ET.fromstring(self.files["xl/workbook.xml"])
+        sheet_names = [sh.attrib.get("name") for sh in wb_debug.find(q("sheets")).findall(q("sheet"))]
         self.sheet_path = resolve_sheet(self.files, sheet_name)
         self.root = ET.fromstring(self.files[self.sheet_path])
+        print(f"WORKBOOK SHEETS: {sheet_names}; selected path: {self.sheet_path}", flush=True)
 
     def value(self, cell):
         if cell is None:
@@ -168,9 +171,18 @@ class Book:
             rows = self.rows()
             for debug_row, debug_cells in rows.items():
                 if debug_row <= 40:
-                    debug_text = {col_letters(cn): self.value(cell) for cn, cell in debug_cells.items() if isinstance(self.value(cell), str)}
-                    if debug_text:
-                        print(f"HEADER DIAGNOSTIC row={debug_row}: {debug_text}", flush=True)
+                    if debug_row <= 3:
+                        debug_text = {
+                            col_letters(cn): {
+                                "value": self.value(cell),
+                                "type": cell.attrib.get("t"),
+                                "attrs": dict(cell.attrib),
+                                "raw": ET.tostring(cell, encoding="unicode")[:220]
+                            }
+                            for cn, cell in debug_cells.items()
+                        }
+                        if debug_text:
+                            print(f"HEADER CELL DIAGNOSTIC row={debug_row}: {debug_text}", flush=True)
             raise RuntimeError("Index header 'آخرین (واحد)' not found within first 40 rows.")
         dr, dc = date_hits[0]
         if need_index:
