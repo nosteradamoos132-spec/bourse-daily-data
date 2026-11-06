@@ -1,1 +1,1 @@
-Initial independent BRSAPI trigger setup — 2026-11-06
+2026-11-06T15:46:53Z daily BRSAPI scheduled trigger
