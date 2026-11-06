@@ -1,6 +1,9 @@
 name: Daily TSETMC MarketWatch Download
 
 on:
+  schedule:
+    - cron: "15 16 * * *"
+      timezone: "Europe/Berlin"
   push:
     branches: [main]
     paths:
