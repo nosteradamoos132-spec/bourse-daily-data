@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconcile all final daily JSON reports with two separate XLSX workbooks."""
+"""Reconcile all closed daily BRSAPI JSON reports into one five-column market workbook."""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,7 @@ from xml.etree import ElementTree as ET
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships"
-INDEX = Path("archive/شاخص کل تا 12 آبان 1405.xlsx")
-TRADES = Path("archive/ارزش و حجم معاملات روزانه.xlsx")
+MASTER = Path("archive/داده‌های روزانه بازار.xlsx")
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 def q(tag):
@@ -75,6 +74,9 @@ def col_letters(n):
         n, rem = divmod(n-1, 26)
         out = chr(65+rem) + out
     return out
+
+def row_cells(row):
+    return {col_number(cell.attrib["r"]): cell for cell in row.findall(q("c")) if cell.attrib.get("r")}
 
 CELLREF = re.compile(r"(\$?[A-Z]{1,3}\$?)(\d+)")
 
@@ -279,103 +281,206 @@ def load_records():
         if obj.get("state") != "بسته":
             print(f"SKIP {d}: market not closed")
             continue
-        for key in ("index", "tval", "tvol"):
+        for key in ("index", "index_equalWeight", "tval", "tvol"):
             v = obj.get(key)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
                 raise RuntimeError(f"{path}: invalid {key}={v!r}")
         if d in found:
             raise RuntimeError(f"Duplicate JSON archive date: {d}")
-        found[d] = {"date": d, "index": float(obj["index"]), "tval": int(obj["tval"]), "tvol": int(obj["tvol"])}
+        found[d] = {"date": d, "index": float(obj["index"]), "index_equalWeight": float(obj["index_equalWeight"]), "tval": int(obj["tval"]), "tvol": int(obj["tvol"])}
     if not found:
         raise RuntimeError("No closed-market index JSON reports found.")
     return [found[d] for d in sorted(found)]
 
-def update_index(records):
-    if not INDEX.is_file():
-        raise RuntimeError(f"Index workbook missing: {INDEX}")
-    b = Book(INDEX)
-    hr, dc, ic = b.find_headers(True)
-    known = b.dates(dc, hr+1)
-    added, skipped = [], []
-    for rec in records:
-        d = rec["date"]
-        if d in known:
-            skipped.append(d)
-            continue
-        existing_rows = b.rows()
-        sample = next((b.value(cells.get(dc)) for rn, cells in sorted(existing_rows.items()) if rn > hr and canonical_date(b.value(cells.get(dc)))), None)
-        b.insert(hr, {dc: jalali_text(d, sample), ic: rec["index"]}, {dc: jalali_text(d, sample), ic: rec["index"]})
-        known.add(d)
-        added.append(d)
-    if added:
-        b.save()
-    v = Book(INDEX)
-    h, dcol, icol = v.find_headers(True)
-    after = v.dates(dcol, h+1)
-    missing = set(r["date"] for r in records)-after
-    if missing:
-        raise RuntimeError(f"Index workbook missing archive dates after update: {sorted(missing)}")
-    top = v.rows().get(h+1, {})
-    top_date = canonical_date(v.value(top.get(dcol)))
-    if top_date != max(after) or v.value(top.get(icol)) is None:
-        raise RuntimeError(f"Index newest row not immediately below headers: row {h+1} date={top_date}, expected={max(after)}")
-    return added, skipped, f"header row={h}; date col={col_letters(dcol)}; index col={col_letters(icol)}; top date={top_date}"
+def set_numeric_cell(cell, value):
+    for child in list(cell):
+        if child.tag in (q("v"), q("is")):
+            cell.remove(child)
+    cell.attrib.pop("t", None)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise RuntimeError("Refusing to write a non-finite numeric value.")
+    ET.SubElement(cell, q("v")).text = str(value)
 
-def update_trades(records):
-    if not TRADES.is_file():
-        raise RuntimeError(f"Separate trading workbook missing: {TRADES}")
-    b = Book(TRADES, "ارزش و حجم معاملات")
-    hr, dc, _ = b.find_headers(False)
-    if hr != 1 or dc != 1:
-        raise RuntimeError(f"Unexpected independent trading workbook layout: header row={hr}, date col={dc}")
-    known = b.dates(1, 2)
-    added, skipped = [], []
-    for rec in records:
-        d = rec["date"]
-        if d in known:
-            skipped.append(d)
+
+def update_master(records):
+    if not MASTER.is_file():
+        raise RuntimeError(f"Unified workbook missing: {MASTER}")
+
+    book = Book(MASTER, "داده‌های روزانه بازار")
+    rows = book.rows()
+    header_row = 1
+    header = rows.get(header_row, {})
+    expected_headers = {
+        1: "تاریخ (شمسی)",
+        2: "شاخص کل",
+        3: "شاخص هم‌وزن",
+        4: "ارزش معاملات (ریال)",
+        5: "حجم معاملات (سهم)",
+    }
+    for column, expected in expected_headers.items():
+        actual = book.value(header.get(column))
+        if actual != expected:
+            raise RuntimeError(
+                f"Unexpected workbook header at column {column}: {actual!r}; expected {expected!r}"
+            )
+
+    row_by_date = {}
+    for row_number, cells in rows.items():
+        if row_number <= header_row:
             continue
-        b.insert(1, {1: d, 2: rec["tval"], 3: rec["tvol"]}, {}, {1: "1", 2: "11", 3: "11"})
-        known.add(d)
-        added.append(d)
-    if added:
-        rows = b.root.find(q("sheetData")).findall(q("row"))
-        maxrow = max(int(x.attrib["r"]) for x in rows)
-        for af in b.root.findall(q("autoFilter")):
-            af.set("ref", f"A1:C{maxrow}")
-        dim = b.root.find(q("dimension"))
-        if dim is not None:
-            dim.set("ref", f"A1:C{maxrow}")
-        b.save()
-    v = Book(TRADES, "ارزش و حجم معاملات")
-    h, dc, _ = v.find_headers(False)
-    after = v.dates(dc, h+1)
-    missing = set(r["date"] for r in records)-after
+        date_key = canonical_date(book.value(cells.get(1)))
+        if not date_key:
+            if any(book.value(cell) not in (None, "") for cell in cells.values()):
+                raise RuntimeError(f"Data row {row_number} has no valid date.")
+            continue
+        if date_key in row_by_date:
+            raise RuntimeError(f"Duplicate date in unified workbook: {date_key}")
+        row_by_date[date_key] = row_number
+
+    inserted = []
+    refreshed = []
+    for record in records:
+        date_key = record["date"]
+        row_number = row_by_date.get(date_key)
+        if row_number is None:
+            book.insert(
+                header_row,
+                {
+                    1: date_key,
+                    2: record["index"],
+                    3: record["index_equalWeight"],
+                    4: record["tval"],
+                    5: record["tvol"],
+                },
+                {},
+            )
+            inserted.append(date_key)
+            row_by_date[date_key] = header_row + 1
+            rows = book.rows()
+            row_by_date = {}
+            for current_row, cells in rows.items():
+                if current_row > header_row:
+                    current_date = canonical_date(book.value(cells.get(1)))
+                    if current_date:
+                        row_by_date[current_date] = current_row
+        else:
+            cells = rows.get(row_number, {})
+            for column, value in (
+                (2, record["index"]),
+                (3, record["index_equalWeight"]),
+            ):
+                cell = cells.get(column)
+                if cell is None:
+                    cell = ET.SubElement(
+                        next(row for row in book.root.find(q("sheetData")).findall(q("row"))
+                             if int(row.attrib["r"]) == row_number),
+                        q("c"),
+                        {"r": f"{col_letters(column)}{row_number}"},
+                    )
+                set_numeric_cell(cell, value)
+
+            for column, key in ((4, "tval"), (5, "tvol")):
+                cell = cells.get(column)
+                if cell is None:
+                    cell = ET.SubElement(
+                        next(row for row in book.root.find(q("sheetData")).findall(q("row"))
+                             if int(row.attrib["r"]) == row_number),
+                        q("c"),
+                        {"r": f"{col_letters(column)}{row_number}"},
+                    )
+                    set_numeric_cell(cell, record[key])
+                elif book.value(cell) in (None, ""):
+                    set_numeric_cell(cell, record[key])
+            refreshed.append(date_key)
+
+    sheet_data = book.root.find(q("sheetData"))
+    row_nodes = list(sheet_data.findall(q("row")))
+    header_node = next(
+        (row for row in row_nodes if int(row.attrib.get("r", "0")) == header_row),
+        None,
+    )
+    data_rows = []
+    for row in row_nodes:
+        row_number = int(row.attrib.get("r", "0"))
+        if row_number <= header_row:
+            continue
+        cells = row_cells(row)
+        date_key = canonical_date(book.value(cells.get(1)))
+        if date_key:
+            data_rows.append((date_key, row))
+    data_rows.sort(key=lambda item: item[0], reverse=True)
+
+    for child in list(sheet_data):
+        sheet_data.remove(child)
+    sheet_data.append(header_node)
+    for row_number, (_, row) in enumerate(data_rows, start=header_row + 1):
+        row.set("r", str(row_number))
+        for cell in row.findall(q("c")):
+            column = col_number(cell.attrib["r"])
+            cell.set("r", f"{col_letters(column)}{row_number}")
+        sheet_data.append(row)
+
+    last_row = header_row + len(data_rows)
+    dimension = book.root.find(q("dimension"))
+    if dimension is not None:
+        dimension.set("ref", f"A1:E{last_row}")
+    auto_filter = book.root.find(q("autoFilter"))
+    if auto_filter is not None:
+        auto_filter.set("ref", f"A1:E{last_row}")
+
+    book.save()
+
+    check = Book(MASTER, "داده‌های روزانه بازار")
+    check_rows = check.rows()
+    verified = {}
+    for row_number, cells in check_rows.items():
+        if row_number <= header_row:
+            continue
+        date_key = canonical_date(check.value(cells.get(1)))
+        if date_key:
+            verified[date_key] = cells
+
+    missing = sorted(set(record["date"] for record in records) - set(verified))
     if missing:
-        raise RuntimeError(f"Trading workbook missing archive dates: {sorted(missing)}")
-    top = v.rows().get(h+1, {})
-    top_date = canonical_date(v.value(top.get(1)))
-    if top_date != max(after) or v.value(top.get(2)) is None or v.value(top.get(3)) is None:
-        raise RuntimeError(f"Trading workbook newest row incomplete or misplaced at row {h+1}.")
-    return added, skipped, f"header row=1; columns A/B/C; top date={top_date}"
+        raise RuntimeError(f"JSON dates missing from unified workbook: {missing}")
+
+    for record in records:
+        date_key = record["date"]
+        cells = verified[date_key]
+        if float(check.value(cells.get(2))) != record["index"]:
+            raise RuntimeError(f"{date_key}: شاخص کل mismatch")
+        if float(check.value(cells.get(3))) != record["index_equalWeight"]:
+            raise RuntimeError(f"{date_key}: شاخص هم‌وزن mismatch")
+        if check.value(cells.get(4)) in (None, "") or check.value(cells.get(5)) in (None, ""):
+            raise RuntimeError(f"{date_key}: value or volume is blank")
+
+    newest_row = check_rows.get(header_row + 1, {})
+    newest_date = canonical_date(check.value(newest_row.get(1)))
+    if newest_date != max(verified):
+        raise RuntimeError(
+            f"Newest date is not directly below headers: {newest_date!r}; expected {max(verified)!r}"
+        )
+
+    print(f"Unified workbook: {MASTER}")
+    print(f"JSON dates synchronized: {len(records)}")
+    print(f"New rows inserted: {inserted or 'none'}")
+    print(f"Existing rows refreshed with JSON indices: {refreshed or 'none'}")
+    print(f"Newest date: {newest_date}")
+    print("CHECK: all dates matched; both index columns match their daily JSON; value and volume remain populated.")
+
 
 def main():
     records = load_records()
     print(f"Closed JSON reports found: {len(records)}")
-    for r in records:
-        print(f"{r['date']}: index={r['index']}, tval={r['tval']} rial, tvol={r['tvol']} shares")
-    ia, ise, ii = update_index(records)
-    ta, tse, ti = update_trades(records)
-    print("\nINDEX WORKBOOK")
-    print("Inserted:", ia or "none")
-    print("Already present:", ise or "none")
-    print(ii)
-    print("\nSEPARATE TRADING WORKBOOK")
-    print("Inserted:", ta or "none")
-    print("Already present:", tse or "none")
-    print(ti)
-    print("\nCHECK: all archived JSON dates matched in both separate workbooks; duplicate insertions: none.")
+    for record in records:
+        print(
+            f"{record['date']}: index={record['index']}, "
+            f"equalWeight={record['index_equalWeight']}, "
+            f"tval={record['tval']} rial, tvol={record['tvol']} shares"
+        )
+    update_master(records)
     return 0
+
 
 if __name__ == "__main__":
     try:

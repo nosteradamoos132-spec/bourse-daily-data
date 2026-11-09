@@ -1,4 +1,4 @@
-name: Update index and trading workbooks
+name: Update unified daily market workbook
 
 on:
   workflow_dispatch:
@@ -17,11 +17,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: update-index-and-trading-workbooks
+  group: update-unified-market-workbook
   cancel-in-progress: false
 
 jobs:
-  update-workbooks:
+  update-workbook:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -34,20 +34,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Reconcile every archived JSON date with both workbooks
+      - name: Reconcile every archived JSON date into the unified workbook
         run: python scripts/update_index_excels.py
 
-      - name: Commit the updated workbooks
+      - name: Commit the unified workbook
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "archive/شاخص کل تا 12 آبان 1405.xlsx" "archive/ارزش و حجم معاملات روزانه.xlsx"
+          git add -- "archive/داده‌های روزانه بازار.xlsx"
 
           if git diff --cached --quiet; then
             echo "No workbook changes; all archived dates are already present."
             exit 0
           fi
 
-          git commit -m "Update daily index and trading metrics workbooks"
+          git commit -m "Update unified daily market workbook"
           git push
