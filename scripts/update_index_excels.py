@@ -16,6 +16,7 @@ MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships"
 MASTER = Path("archive/داده‌های روزانه بازار.xlsx")
+BILLION = 1_000_000_000
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 def q(tag):
@@ -292,6 +293,15 @@ def load_records():
         raise RuntimeError("No closed-market index JSON reports found.")
     return [found[d] for d in sorted(found)]
 
+def set_text_cell(cell, value):
+    for child in list(cell):
+        if child.tag in (q("v"), q("is")):
+            cell.remove(child)
+    cell.set("t", "inlineStr")
+    inline = ET.SubElement(cell, q("is"))
+    ET.SubElement(inline, q("t")).text = value
+
+
 def set_numeric_cell(cell, value):
     for child in list(cell):
         if child.tag in (q("v"), q("is")):
@@ -314,8 +324,6 @@ def update_master(records):
         1: "تاریخ (شمسی)",
         2: "شاخص کل",
         3: "شاخص هم‌وزن",
-        4: "ارزش معاملات (ریال)",
-        5: "حجم معاملات (سهم)",
     }
     for column, expected in expected_headers.items():
         actual = book.value(header.get(column))
@@ -323,6 +331,12 @@ def update_master(records):
             raise RuntimeError(
                 f"Unexpected workbook header at column {column}: {actual!r}; expected {expected!r}"
             )
+
+    for column, label in ((4, "ارزش معاملات (B)"), (5, "حجم معاملات (B)")):
+        cell = header.get(column)
+        if cell is None:
+            raise RuntimeError(f"Missing header cell in column {column}")
+        set_text_cell(cell, label)
 
     row_by_date = {}
     for row_number, cells in rows.items():
@@ -349,8 +363,8 @@ def update_master(records):
                     1: date_key,
                     2: record["index"],
                     3: record["index_equalWeight"],
-                    4: record["tval"],
-                    5: record["tvol"],
+                    4: record["tval"] / BILLION,
+                    5: record["tvol"] / BILLION,
                 },
                 {},
             )
@@ -388,9 +402,7 @@ def update_master(records):
                         q("c"),
                         {"r": f"{col_letters(column)}{row_number}"},
                     )
-                    set_numeric_cell(cell, record[key])
-                elif book.value(cell) in (None, ""):
-                    set_numeric_cell(cell, record[key])
+                set_numeric_cell(cell, record[key] / BILLION)
             refreshed.append(date_key)
 
     sheet_data = book.root.find(q("sheetData"))
@@ -451,8 +463,14 @@ def update_master(records):
             raise RuntimeError(f"{date_key}: شاخص کل mismatch")
         if float(check.value(cells.get(3))) != record["index_equalWeight"]:
             raise RuntimeError(f"{date_key}: شاخص هم‌وزن mismatch")
-        if check.value(cells.get(4)) in (None, "") or check.value(cells.get(5)) in (None, ""):
-            raise RuntimeError(f"{date_key}: value or volume is blank")
+        expected_value = record["tval"] / BILLION
+        expected_volume = record["tvol"] / BILLION
+        actual_value = check.value(cells.get(4))
+        actual_volume = check.value(cells.get(5))
+        if not math.isclose(float(actual_value), expected_value, rel_tol=1e-12):
+            raise RuntimeError(f"{date_key}: value B conversion mismatch")
+        if not math.isclose(float(actual_volume), expected_volume, rel_tol=1e-12):
+            raise RuntimeError(f"{date_key}: volume B conversion mismatch")
 
     newest_row = check_rows.get(header_row + 1, {})
     newest_date = canonical_date(check.value(newest_row.get(1)))
@@ -476,7 +494,8 @@ def main():
         print(
             f"{record['date']}: index={record['index']}, "
             f"equalWeight={record['index_equalWeight']}, "
-            f"tval={record['tval']} rial, tvol={record['tvol']} shares"
+            f"tval={record['tval'] / BILLION:.3f} B, "
+            f"tvol={record['tvol'] / BILLION:.3f} B"
         )
     update_master(records)
     return 0

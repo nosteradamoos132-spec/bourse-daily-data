@@ -1,1 +1,1 @@
-Manual trigger: refresh the unified daily market workbook from all closed BRSAPI JSON reports.
+Manual trigger: refresh the unified workbook and convert trading value and volume into TSETMC B units.
