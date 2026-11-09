@@ -556,7 +556,11 @@ def update_master(records):
     if auto_filter is not None:
         auto_filter.set("ref", f"A1:E{last_row}")
 
-    # Display both monetary value and volume in billions to three decimals.\n    # This changes only Excel formatting; stored numeric values keep full precision.\n    book.apply_column_number_format((4, 5), header_row + 1, "0.000")\n\n    book.save()
+    # Display both monetary value and volume in billions to three decimals.
+    # This changes only Excel formatting; stored numeric values keep full precision.
+    book.apply_column_number_format((4, 5), header_row + 1, "0.000")
+
+    book.save()
 
     check = Book(MASTER, "داده‌های روزانه بازار")
     check_rows = check.rows()
