@@ -1,2 +1,3 @@
 Manual trigger: refresh the unified workbook and convert trading value and volume into TSETMC B units.
 Formatting check: trading value and volume display as 0.000 B.
+Formatting: value uses #,##0.000; volume uses 0.000.
