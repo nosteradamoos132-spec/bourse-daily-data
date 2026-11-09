@@ -556,9 +556,10 @@ def update_master(records):
     if auto_filter is not None:
         auto_filter.set("ref", f"A1:E{last_row}")
 
-    # Display both monetary value and volume in billions to three decimals.
-    # This changes only Excel formatting; stored numeric values keep full precision.
-    book.apply_column_number_format((4, 5), header_row + 1, "0.000")
+    # Display value with thousand separators and volume with three decimals.
+    # These are display formats only; stored numeric values keep full precision.
+    book.apply_column_number_format((4,), header_row + 1, "#,##0.000")
+    book.apply_column_number_format((5,), header_row + 1, "0.000")
 
     book.save()
 
@@ -591,8 +592,8 @@ def update_master(records):
             raise RuntimeError(f"{date_key}: value B conversion mismatch")
         if not math.isclose(float(actual_volume), expected_volume, rel_tol=1e-12):
             raise RuntimeError(f"{date_key}: volume B conversion mismatch")
-        if check.number_format(cells.get(4)) != "0.000":
-            raise RuntimeError(f"{date_key}: value display format is not 0.000")
+        if check.number_format(cells.get(4)) != "#,##0.000":
+            raise RuntimeError(f"{date_key}: value display format is not #,##0.000")
         if check.number_format(cells.get(5)) != "0.000":
             raise RuntimeError(f"{date_key}: volume display format is not 0.000")
 
@@ -608,7 +609,7 @@ def update_master(records):
     print(f"New rows inserted: {inserted or 'none'}")
     print(f"Existing rows refreshed with JSON indices: {refreshed or 'none'}")
     print(f"Newest date: {newest_date}")
-    print("Value and volume display formats: 0.000; stored numeric precision preserved.")
+    print("Value display format: #,##0.000; volume display format: 0.000; stored numeric precision preserved.")
     print("CHECK: all dates matched; both index columns match their daily JSON; value and volume remain populated and both display formats are verified.")
 
 
