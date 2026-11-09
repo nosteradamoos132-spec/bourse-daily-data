@@ -10,6 +10,7 @@ import zipfile
 import posixpath
 from datetime import date, timedelta
 from pathlib import Path
+from copy import deepcopy
 from xml.etree import ElementTree as ET
 
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -249,6 +250,121 @@ class Book:
         idx = next((i for i, row in enumerate(rows) if int(row.attrib["r"]) > at), len(rows))
         data.insert(idx, new_row)
 
+    def apply_column_number_format(self, columns, first_data_row, format_code):
+        """Set a display format for numeric cells without changing their stored values."""
+        styles_path = "xl/styles.xml"
+        if styles_path not in self.files:
+            raise RuntimeError("Workbook has no xl/styles.xml file.")
+
+        ET.register_namespace("", MAIN)
+        styles = ET.fromstring(self.files[styles_path])
+        num_fmts = styles.find(q("numFmts"))
+        if num_fmts is None:
+            num_fmts = ET.Element(q("numFmts"), {"count": "0"})
+            styles.insert(0, num_fmts)
+
+        num_fmt = next(
+            (item for item in num_fmts.findall(q("numFmt"))
+             if item.attrib.get("formatCode") == format_code),
+            None,
+        )
+        if num_fmt is None:
+            used_ids = {
+                int(item.attrib["numFmtId"])
+                for item in num_fmts.findall(q("numFmt"))
+                if item.attrib.get("numFmtId", "").isdigit()
+            }
+            format_id = 164
+            while format_id in used_ids:
+                format_id += 1
+            ET.SubElement(
+                num_fmts,
+                q("numFmt"),
+                {"numFmtId": str(format_id), "formatCode": format_code},
+            )
+        else:
+            format_id = int(num_fmt.attrib["numFmtId"])
+        num_fmts.set("count", str(len(num_fmts.findall(q("numFmt")))))
+
+        cell_xfs = styles.find(q("cellXfs"))
+        if cell_xfs is None:
+            raise RuntimeError("Workbook styles have no cellXfs collection.")
+        xfs = cell_xfs.findall(q("xf"))
+        if not xfs:
+            raise RuntimeError("Workbook styles have no base cell format.")
+
+        style_ids = {}
+        sheet_data = self.root.find(q("sheetData"))
+        for row in sheet_data.findall(q("row")):
+            if int(row.attrib.get("r", "0")) < first_data_row:
+                continue
+            cells = row_cells(row)
+            for column in columns:
+                cell = cells.get(column)
+                if cell is None or cell.find(q("v")) is None:
+                    continue
+                try:
+                    base_style_id = int(cell.attrib.get("s", "0"))
+                except ValueError as exc:
+                    raise RuntimeError("Invalid cell style index.") from exc
+                if not (0 <= base_style_id < len(xfs)):
+                    raise RuntimeError("Cell style index is outside the workbook style table.")
+
+                key = (base_style_id, format_id)
+                if key not in style_ids:
+                    base_xf = xfs[base_style_id]
+                    formatted_xf = deepcopy(base_xf)
+                    formatted_xf.set("numFmtId", str(format_id))
+                    formatted_xf.set("applyNumberFormat", "1")
+
+                    existing_id = None
+                    candidate_children = [
+                        ET.tostring(child, encoding="unicode")
+                        for child in list(formatted_xf)
+                    ]
+                    for index, candidate in enumerate(cell_xfs.findall(q("xf"))):
+                        candidate_children_existing = [
+                            ET.tostring(child, encoding="unicode")
+                            for child in list(candidate)
+                        ]
+                        if (
+                            dict(candidate.attrib) == dict(formatted_xf.attrib)
+                            and candidate_children_existing == candidate_children
+                        ):
+                            existing_id = index
+                            break
+
+                    if existing_id is None:
+                        existing_id = len(cell_xfs.findall(q("xf")))
+                        cell_xfs.append(formatted_xf)
+                        cell_xfs.set("count", str(len(cell_xfs.findall(q("xf")))))
+                    style_ids[key] = existing_id
+
+                cell.set("s", str(style_ids[key]))
+
+        self.files[styles_path] = ET.tostring(
+            styles, encoding="utf-8", xml_declaration=True
+        )
+
+    def number_format(self, cell):
+        if cell is None:
+            return None
+        styles_path = "xl/styles.xml"
+        styles = ET.fromstring(self.files[styles_path])
+        cell_xfs = styles.find(q("cellXfs"))
+        num_fmts = styles.find(q("numFmts"))
+        if cell_xfs is None or num_fmts is None:
+            return None
+        try:
+            style_id = int(cell.attrib.get("s", "0"))
+            format_id = int(cell_xfs.findall(q("xf"))[style_id].attrib.get("numFmtId", "0"))
+        except (ValueError, IndexError):
+            return None
+        for item in num_fmts.findall(q("numFmt")):
+            if int(item.attrib.get("numFmtId", "-1")) == format_id:
+                return item.attrib.get("formatCode")
+        return None
+
     def save(self):
         ET.register_namespace("", MAIN)
         ET.register_namespace("r", REL)
@@ -440,7 +556,7 @@ def update_master(records):
     if auto_filter is not None:
         auto_filter.set("ref", f"A1:E{last_row}")
 
-    book.save()
+    # Display both monetary value and volume in billions to three decimals.\n    # This changes only Excel formatting; stored numeric values keep full precision.\n    book.apply_column_number_format((4, 5), header_row + 1, "0.000")\n\n    book.save()
 
     check = Book(MASTER, "داده‌های روزانه بازار")
     check_rows = check.rows()
@@ -471,6 +587,10 @@ def update_master(records):
             raise RuntimeError(f"{date_key}: value B conversion mismatch")
         if not math.isclose(float(actual_volume), expected_volume, rel_tol=1e-12):
             raise RuntimeError(f"{date_key}: volume B conversion mismatch")
+        if check.number_format(cells.get(4)) != "0.000":
+            raise RuntimeError(f"{date_key}: value display format is not 0.000")
+        if check.number_format(cells.get(5)) != "0.000":
+            raise RuntimeError(f"{date_key}: volume display format is not 0.000")
 
     newest_row = check_rows.get(header_row + 1, {})
     newest_date = canonical_date(check.value(newest_row.get(1)))
@@ -484,7 +604,8 @@ def update_master(records):
     print(f"New rows inserted: {inserted or 'none'}")
     print(f"Existing rows refreshed with JSON indices: {refreshed or 'none'}")
     print(f"Newest date: {newest_date}")
-    print("CHECK: all dates matched; both index columns match their daily JSON; value and volume remain populated.")
+    print("Value and volume display formats: 0.000; stored numeric precision preserved.")
+    print("CHECK: all dates matched; both index columns match their daily JSON; value and volume remain populated and both display formats are verified.")
 
 
 def main():
