@@ -203,7 +203,7 @@ jobs:
                       f"state={state!r}"
                   )
 
-                  if isinstance(api_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
+                  if api_date == expected_date and isinstance(api_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
                       observed_destination = archive_dir / f"index-{api_date}.json"
                       if observed_destination.exists():
                           print(
