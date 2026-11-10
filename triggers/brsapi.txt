@@ -1,1 +1,2 @@
 2026-11-09T18:40:08Z fallback BRSAPI trigger
+Manual BRSAPI trigger requested 2026-11-10
