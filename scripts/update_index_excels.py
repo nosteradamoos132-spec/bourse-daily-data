@@ -402,6 +402,13 @@ def load_records():
             v = obj.get(key)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
                 raise RuntimeError(f"{path}: invalid {key}={v!r}")
+        report_time = obj.get("time")
+        if not isinstance(report_time, str) or report_time < "17:00:00":
+            raise RuntimeError(f"{path}: report time is too early or invalid: {report_time!r}")
+        for key in ("mv", "tno", "tval", "tvol"):
+            v = obj.get(key)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) or float(v) <= 0:
+                raise RuntimeError(f"{path}: incomplete/non-positive {key}={v!r}")
         if d in found:
             raise RuntimeError(f"Duplicate JSON archive date: {d}")
         found[d] = {"date": d, "index": float(obj["index"]), "index_equalWeight": float(obj["index_equalWeight"]), "tval": int(obj["tval"]), "tvol": int(obj["tvol"])}
