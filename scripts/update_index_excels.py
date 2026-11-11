@@ -405,7 +405,7 @@ def load_records():
                 problems.append(f"invalid {key}={v!r}")
 
         report_time = obj.get("time")
-        if not isinstance(report_time, str) or not re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", report_time) or report_time < "17:00:00":
+        if not isinstance(report_time, str) or not re.fullmatch(r"\d{2}:\d{2}:\d{2}", report_time) or report_time < "17:00:00":
             problems.append(f"report time is too early or invalid: {report_time!r}")
 
         for key in ("mv", "tno", "tval", "tvol"):
