@@ -398,19 +398,27 @@ def load_records():
         if obj.get("state") != "بسته":
             print(f"SKIP {d}: market not closed")
             continue
+        problems = []
         for key in ("index", "index_equalWeight", "tval", "tvol"):
             v = obj.get(key)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
-                raise RuntimeError(f"{path}: invalid {key}={v!r}")
+                problems.append(f"invalid {key}={v!r}")
+
         report_time = obj.get("time")
-        if not isinstance(report_time, str) or report_time < "17:00:00":
-            raise RuntimeError(f"{path}: report time is too early or invalid: {report_time!r}")
+        if not isinstance(report_time, str) or not re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", report_time) or report_time < "17:00:00":
+            problems.append(f"report time is too early or invalid: {report_time!r}")
+
         for key in ("mv", "tno", "tval", "tvol"):
             v = obj.get(key)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) or float(v) <= 0:
-                raise RuntimeError(f"{path}: incomplete/non-positive {key}={v!r}")
+                problems.append(f"incomplete/non-positive {key}={v!r}")
+
+        if problems:
+            print(f"SKIP INVALID REPORT {d} ({path.name}): {'; '.join(problems)}")
+            continue
+
         if d in found:
-            raise RuntimeError(f"Duplicate JSON archive date: {d}")
+            raise RuntimeError(f"Duplicate valid JSON archive date: {d}")
         found[d] = {"date": d, "index": float(obj["index"]), "index_equalWeight": float(obj["index_equalWeight"]), "tval": int(obj["tval"]), "tvol": int(obj["tvol"])}
     if not found:
         raise RuntimeError("No closed-market index JSON reports found.")
@@ -436,6 +444,7 @@ def set_numeric_cell(cell, value):
 
 
 def update_master(records):
+    valid_dates = {record["date"] for record in records}
     if not MASTER.is_file():
         raise RuntimeError(f"Unified workbook missing: {MASTER}")
 
@@ -541,8 +550,10 @@ def update_master(records):
             continue
         cells = row_cells(row)
         date_key = canonical_date(book.value(cells.get(1)))
-        if date_key:
+        if date_key in valid_dates:
             data_rows.append((date_key, row))
+        elif date_key:
+            print(f"REMOVE INVALID/UNVERIFIED WORKBOOK ROW: {date_key}")
     data_rows.sort(key=lambda item: item[0], reverse=True)
 
     for child in list(sheet_data):
