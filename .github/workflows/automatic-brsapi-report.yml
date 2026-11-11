@@ -172,6 +172,41 @@ jobs:
           poll_interval_seconds = 5 * 60
           attempt_number = 0
 
+          # A complete report already archived for today closes this date.
+          # Do not poll the API again until the next scheduled trading day.
+          if destination.exists():
+              try:
+                  existing = json.loads(destination.read_text(encoding="utf-8"))
+                  existing_time = existing.get("time")
+                  existing_complete = (
+                      existing.get("date") == expected_date
+                      and existing.get("state") == "بسته"
+                      and isinstance(existing_time, str)
+                      and re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", existing_time)
+                      and existing_time >= "17:00:00"
+                      and all(
+                          not isinstance(existing.get(field), bool)
+                          and isinstance(existing.get(field), (int, float))
+                          and math.isfinite(float(existing.get(field)))
+                          and float(existing.get(field)) > 0
+                          for field in ("mv", "tno", "tval", "tvol")
+                      )
+                  )
+              except Exception as exc:
+                  print(f"Existing archive cannot be validated: {exc}")
+                  existing_complete = False
+
+              if existing_complete:
+                  print(
+                      f"VALID DUPLICATE: {destination.name} already contains "
+                      f"today's complete final report. No API request will be made."
+                  )
+                  with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                      output.write("created=false\\n")
+                      output.write(f"report_date={expected_date}\\n")
+                      output.write("result=duplicate\\n")
+                  sys.exit(0)
+
           while time.monotonic() - started < max_wait_seconds:
               attempt_number += 1
               try:
