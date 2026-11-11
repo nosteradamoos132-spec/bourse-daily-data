@@ -182,7 +182,7 @@ jobs:
                       existing.get("date") == expected_date
                       and existing.get("state") == "بسته"
                       and isinstance(existing_time, str)
-                      and re.fullmatch(r"\\d{2}:\\d{2}:\\d{2}", existing_time)
+                      and re.fullmatch(r"\d{2}:\d{2}:\d{2}", existing_time)
                       and existing_time >= "17:00:00"
                       and all(
                           not isinstance(existing.get(field), bool)
