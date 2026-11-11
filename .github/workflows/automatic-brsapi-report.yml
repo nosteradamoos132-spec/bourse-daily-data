@@ -206,16 +206,42 @@ jobs:
                   if api_date == expected_date and isinstance(api_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", api_date):
                       observed_destination = archive_dir / f"index-{api_date}.json"
                       if observed_destination.exists():
+                          existing_complete = False
+                          try:
+                              existing = json.loads(observed_destination.read_text(encoding="utf-8"))
+                              existing_time = existing.get("time")
+                              existing_complete = (
+                                  existing.get("date") == expected_date
+                                  and existing.get("state") == "بسته"
+                                  and isinstance(existing_time, str)
+                                  and existing_time >= "17:00:00"
+                                  and all(
+                                      not isinstance(existing.get(field), bool)
+                                      and isinstance(existing.get(field), (int, float))
+                                      and math.isfinite(float(existing.get(field)))
+                                      and float(existing.get(field)) > 0
+                                      for field in ("mv", "tno", "tval", "tvol")
+                                  )
+                              )
+                          except Exception as exc:
+                              print(f"Existing archive cannot be validated: {exc}")
+
+                          if existing_complete:
+                              print(
+                                  f"VALID DUPLICATE: {observed_destination.name} "
+                                  f"already contains a complete final report. "
+                                  f"No file was saved."
+                              )
+                              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                                  output.write("created=false\n")
+                                  output.write(f"report_date={api_date}\n")
+                                  output.write("result=duplicate\n")
+                              sys.exit(0)
+
                           print(
-                              f"Duplicate report date {api_date}: "
-                              f"{observed_destination.name} already exists. "
-                              f"No file was saved."
+                              f"INCOMPLETE ARCHIVE: {observed_destination.name} "
+                              f"will be replaced only after a valid final report is received."
                           )
-                          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                              output.write("created=false\n")
-                              output.write(f"report_date={api_date}\n")
-                              output.write("result=duplicate\n")
-                          sys.exit(0)
 
                   numeric_ok = True
                   for field in required_numeric:
@@ -227,12 +253,25 @@ jobs:
                           numeric_ok = False
                           break
 
+                  positive_metrics = all(
+                      not isinstance(data.get(field), bool)
+                      and isinstance(data.get(field), (int, float))
+                      and math.isfinite(float(data.get(field)))
+                      and float(data.get(field)) > 0
+                      for field in ("mv", "tno", "tval", "tvol")
+                  )
+                  final_time_ok = (
+                      isinstance(report_time, str)
+                      and re.fullmatch(r"\d{2}:\d{2}:\d{2}", report_time)
+                      and report_time >= "17:00:00"
+                  )
+
                   report_ready = (
                       api_date == expected_date
                       and state == "بسته"
-                      and isinstance(report_time, str)
-                      and re.fullmatch(r"\d{2}:\d{2}:\d{2}", report_time)
+                      and final_time_ok
                       and numeric_ok
+                      and positive_metrics
                   )
 
                   if report_ready:
@@ -247,7 +286,9 @@ jobs:
                   print(
                       f"Report not final/current/complete yet; "
                       f"expected date={expected_date}, state='بسته', "
-                      f"numeric_fields_valid={numeric_ok}."
+                      f"numeric_fields_valid={numeric_ok}, "
+                      f"positive_trading_metrics={positive_metrics}, "
+                      f"final_time_at_or_after_17_00={final_time_ok}."
                   )
 
               except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
