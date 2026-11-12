@@ -37,6 +37,9 @@ jobs:
       - name: Reconcile every archived JSON date into the unified workbook
         run: python scripts/update_index_excels.py
 
+      - name: Merge verified manual historical rows without overwriting existing dates
+        run: python scripts/merge_manual_history.py
+
       - name: Commit the unified workbook
         run: |
           set -euo pipefail
