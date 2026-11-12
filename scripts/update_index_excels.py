@@ -553,7 +553,10 @@ def update_master(records):
         if date_key in valid_dates:
             data_rows.append((date_key, row))
         elif date_key:
-            print(f"REMOVE INVALID/UNVERIFIED WORKBOOK ROW: {date_key}")
+            # Keep manually curated historical rows that do not have daily JSON files.
+            # The JSON archive remains authoritative for dates it contains.
+            data_rows.append((date_key, row))
+            print(f"PRESERVE HISTORICAL WORKBOOK ROW: {date_key}")
     data_rows.sort(key=lambda item: item[0], reverse=True)
 
     for child in list(sheet_data):
