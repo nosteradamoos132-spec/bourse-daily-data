@@ -1,0 +1,37 @@
+name: 20:00 Market Close Watchdog
+
+on:
+  schedule:
+    - cron: "0 20 * * 0-4,6"
+      timezone: "Europe/Berlin"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: daily-brsapi-report
+  cancel-in-progress: false
+
+jobs:
+  verify-and-recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check report and workbook; continue until both are verified
+        env:
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/market_close_watchdog.py
