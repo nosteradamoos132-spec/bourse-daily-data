@@ -213,8 +213,10 @@ def main():
                 print("No valid final report yet; will retry.")
         except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
             print(f"Report attempt failed: {type(exc).__name__}: {exc}")
+            report = None
         except Exception as exc:
             print(f"Unexpected report attempt error: {type(exc).__name__}: {exc}")
+            report = None
         if not report:
             time.sleep(POLL_SECONDS)
 
