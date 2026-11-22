@@ -957,6 +957,18 @@ def cycle_start_date(cycle):
         raise RuntimeError("Active cycle has no valid start timestamp.")
     return started.date()
 
+def manual_resume_allowed(now, cycle):
+    """Manual API resume is limited to the active cycle's following day, before 07:30."""
+    if not cycle or cycle.get("status") != "fetching":
+        return False
+    start_date = cycle_start_date(cycle)
+    deadline = datetime.combine(
+        start_date + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=TEHRAN,
+    ) + timedelta(hours=7, minutes=30)
+    return now.date() == start_date + timedelta(days=1) and now < deadline
+
 def close_failed_cycle(state, now, reason):
     cycle = state.get("active_cycle")
     if not cycle:
@@ -1592,12 +1604,8 @@ def main():
         if not cycle:
             print("MANUAL RESUME BLOCKED: there is no active previous-day cycle.")
             return 0
-        start_date = cycle_start_date(cycle)
-        if now.date() != start_date + timedelta(days=1):
-            print("MANUAL RESUME BLOCKED: manual API resume is allowed only on the calendar day after the cycle started.")
-            return 0
-        if now.hour >= 7 and (now.hour > 7 or now.minute >= 30):
-            print("MANUAL RESUME BLOCKED: the previous-day cycle deadline has passed.")
+        if not manual_resume_allowed(now, cycle):
+            print("MANUAL RESUME BLOCKED: only an active fetching cycle may be resumed on the following Tehran calendar day, before 07:30.")
             return 0
         print(f"MANUAL RESUME ENABLED: continuing only active cycle {cycle.get('market_date')}; no new cycle can start.")
     usage = state.setdefault("daily_usage", {})
