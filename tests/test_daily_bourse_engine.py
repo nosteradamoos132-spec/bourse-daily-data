@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE_PATH = ROOT / "scripts" / "daily_bourse_engine.py"
@@ -135,6 +136,79 @@ class TehranScheduleTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["date"], "1405-09-01")
+
+
+    def test_archived_date_duplicate_is_detected(self):
+        report = self.sample_report("1405-08-30")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_dir = Path(temp_dir)
+            (archive_dir / "index-1405-08-30.json").write_text(
+                json.dumps(report, ensure_ascii=False), encoding="utf-8"
+            )
+            with patch.object(engine, "ARCHIVE_DIR", archive_dir):
+                reason = engine.find_duplicate_archived_report(report)
+
+        self.assertIsNotNone(reason)
+        self.assertIn("already exists", reason)
+
+    def test_identical_market_values_on_another_date_are_duplicate(self):
+        archived = self.sample_report("1405-08-30")
+        incoming = self.sample_report("1405-09-01")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_dir = Path(temp_dir)
+            (archive_dir / "index-1405-08-30.json").write_text(
+                json.dumps(archived, ensure_ascii=False), encoding="utf-8"
+            )
+            with patch.object(engine, "ARCHIVE_DIR", archive_dir):
+                reason = engine.find_duplicate_archived_report(incoming)
+
+        self.assertIsNotNone(reason)
+        self.assertIn("exactly match", reason)
+
+    def test_new_market_values_are_not_duplicate(self):
+        archived = self.sample_report("1405-08-30")
+        incoming = self.sample_report("1405-09-01")
+        incoming["index"] += 1
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_dir = Path(temp_dir)
+            (archive_dir / "index-1405-08-30.json").write_text(
+                json.dumps(archived, ensure_ascii=False), encoding="utf-8"
+            )
+            with patch.object(engine, "ARCHIVE_DIR", archive_dir):
+                reason = engine.find_duplicate_archived_report(incoming)
+
+        self.assertIsNone(reason)
+
+    def test_duplicate_response_closes_cycle_without_registration(self):
+        now = self.dt(date(2026, 11, 22), 18, 0)
+        cycle = {
+            "market_date": "1405-09-01",
+            "started_at": now.isoformat(),
+            "status": "fetching",
+            "stage_attempts": [0, 0, 0, 0, 0, 0],
+            "last_request_at": None,
+        }
+        state = {
+            "schema_version": 1,
+            "active_cycle": cycle,
+            "last_completed_at": None,
+            "last_cycle": None,
+            "daily_usage": {},
+        }
+        with patch.dict(os.environ, {"BRSAPI_KEY": "test-key"}):
+            with patch.object(engine, "persist_state") as persist:
+                with patch.object(
+                    engine,
+                    "request_brsapi",
+                    return_value=(None, None, 200, "DUPLICATE: old report already archived"),
+                ):
+                    engine.attempt_api_once(state, now, 0)
+
+        self.assertIsNone(state["active_cycle"])
+        self.assertEqual(state["last_cycle"]["status"], "duplicate")
+        self.assertFalse(state["last_cycle"]["new_report_registered"])
+        self.assertEqual(cycle["stage_attempts"][0], 1)
+        self.assertEqual(persist.call_count, 2)
 
     def test_conflicting_duplicate_archive_date_is_blocked(self):
         first = self.sample_report()
