@@ -679,11 +679,15 @@ def update_master(records):
 
 TEHRAN = ZoneInfo("Asia/Tehran")
 API_URL = "https://api.brsapi.ir/Tsetmc/Index.php"
-STATE_PATH = Path("state/daily-engine-state.json")
+AUTO_STATE_PATH = Path("state/daily-engine-state.json")
+MANUAL_STATE_PATH = Path("state/daily-engine-manual-state.json")
+STATE_PATH = AUTO_STATE_PATH
+MANUAL_MODE = False
 MANUAL_TRIGGER_PATH = Path("state/manual-resume-trigger.json")
 ARCHIVE_DIR = Path("archive")
 WORKBOOK_PATH = Path("archive/داده‌های روزانه بازار.xlsx")
 MAX_DAILY_REQUESTS = 85
+MANUAL_MAX_DAILY_REQUESTS = 15
 MAX_ATTEMPTS_PER_STAGE = 3
 MIN_REQUEST_INTERVAL_SECONDS = 30 * 60
 
@@ -695,6 +699,21 @@ STAGE_NAMES = [
     "04:00",
     "06:00",
 ]
+
+def configure_execution_scope(manual_resume):
+    """Keep manual recovery state isolated from the automatic daily engine."""
+    global STATE_PATH, MANUAL_MODE, MAX_DAILY_REQUESTS
+    MANUAL_MODE = bool(manual_resume)
+    if MANUAL_MODE:
+        STATE_PATH = MANUAL_STATE_PATH
+        MAX_DAILY_REQUESTS = MANUAL_MAX_DAILY_REQUESTS
+        print(
+            f"MANUAL ISOLATED STATE: {STATE_PATH}; "
+            f"manual API cap={MAX_DAILY_REQUESTS}/Tehran day."
+        )
+    else:
+        STATE_PATH = AUTO_STATE_PATH
+        MAX_DAILY_REQUESTS = 85
 
 def tehran_now():
     return datetime.now(TEHRAN)
@@ -1601,7 +1620,7 @@ def start_new_cycle(state, now):
     return True
 
 def start_manual_previous_day_cycle(state, now):
-    """Recover yesterday's missed 18:00 cycle only after an explicit manual command."""
+    """Recover yesterday's missed 18:00 cycle in the isolated manual state file."""
     deadline = datetime.combine(
         now.date(),
         datetime.min.time(),
@@ -1654,7 +1673,8 @@ def start_manual_previous_day_cycle(state, now):
     persist_state(state, f"Manually recover previous-day BRSAPI cycle {market_date}")
     print(
         f"MANUAL PREVIOUS-DAY CYCLE CREATED: {market_date}; "
-        "the normal stage, quota, duplicate, and 30-minute controls remain active."
+        "manual state is isolated from the automatic cycle; "
+        "manual quota cap and 30-minute controls remain active."
     )
     return cycle
 
@@ -1673,6 +1693,7 @@ def main():
     trigger = read_manual_trigger() if event_name == "push" else None
     push_resume = trigger is not None
     manual_resume = dispatch_resume or push_resume
+    configure_execution_scope(manual_resume)
 
     if event_name != "schedule" and not manual_resume:
         print("DIAGNOSTIC ONLY: no explicit manual-resume command was supplied.")
@@ -1712,8 +1733,8 @@ def main():
             print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
             return 0
         print(
-            f"MANUAL RESUME ENABLED: continuing only active cycle "
-            f"{cycle.get('market_date')}; no new cycle can start."
+            f"MANUAL RESUME ENABLED: continuing only isolated manual cycle "
+            f"{cycle.get('market_date')}; automatic state and schedule are untouched."
         )
     usage = state.setdefault("daily_usage", {})
     cutoff_date = (now.date() - timedelta(days=10)).isoformat()
