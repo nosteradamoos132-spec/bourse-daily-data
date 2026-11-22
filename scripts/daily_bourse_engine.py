@@ -680,6 +680,7 @@ def update_master(records):
 TEHRAN = ZoneInfo("Asia/Tehran")
 API_URL = "https://api.brsapi.ir/Tsetmc/Index.php"
 STATE_PATH = Path("state/daily-engine-state.json")
+MANUAL_TRIGGER_PATH = Path("state/manual-resume-trigger.json")
 ARCHIVE_DIR = Path("archive")
 WORKBOOK_PATH = Path("archive/داده‌های روزانه بازار.xlsx")
 MAX_DAILY_REQUESTS = 85
@@ -770,9 +771,12 @@ def commit_and_push(paths, message):
     git("fetch", "origin", "main")
     git("reset", "--hard", "origin/main")
 
-def persist_state(state, message):
+def persist_state(state, message, extra_paths=None):
     save_state(state)
-    commit_and_push([STATE_PATH], message)
+    paths = [STATE_PATH]
+    if extra_paths:
+        paths.extend(extra_paths)
+    commit_and_push(paths, message)
 
 def valid_report(data, expected_date):
     if not isinstance(data, dict):
@@ -958,8 +962,8 @@ def cycle_start_date(cycle):
     return started.date()
 
 def manual_resume_allowed(now, cycle):
-    """Manual API resume is limited to the active cycle's following day, before 07:30."""
-    if not cycle or cycle.get("status") != "fetching":
+    """Manual resume is limited to the active previous-day cycle, before 07:30."""
+    if not cycle or cycle.get("status") not in {"fetching", "pending_excel"}:
         return False
     start_date = cycle_start_date(cycle)
     deadline = datetime.combine(
@@ -968,6 +972,24 @@ def manual_resume_allowed(now, cycle):
         tzinfo=TEHRAN,
     ) + timedelta(hours=7, minutes=30)
     return now.date() == start_date + timedelta(days=1) and now < deadline
+
+def read_manual_trigger():
+    if not MANUAL_TRIGGER_PATH.is_file():
+        return None
+    try:
+        payload = json.loads(MANUAL_TRIGGER_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Manual resume trigger is not valid JSON: {type(exc).__name__}: {exc}"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("action") != "resume_active_cycle"
+        or not isinstance(payload.get("request_id"), str)
+        or not payload["request_id"].strip()
+    ):
+        raise RuntimeError("Manual resume trigger has an invalid structure.")
+    return payload
 
 def close_failed_cycle(state, now, reason):
     cycle = state.get("active_cycle")
@@ -1586,13 +1608,16 @@ def main():
     )
 
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-    manual_resume = (
+    dispatch_resume = (
         event_name == "workflow_dispatch"
         and os.environ.get("MANUAL_RESUME_ACTIVE_CYCLE", "").lower() == "true"
     )
+    trigger = read_manual_trigger() if event_name == "push" else None
+    push_resume = trigger is not None
+    manual_resume = dispatch_resume or push_resume
 
     if event_name != "schedule" and not manual_resume:
-        print("DIAGNOSTIC ONLY: manual resume was not explicitly enabled.")
+        print("DIAGNOSTIC ONLY: no explicit manual-resume command was supplied.")
         state = load_state()
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
@@ -1601,13 +1626,35 @@ def main():
 
     if manual_resume:
         cycle = state.get("active_cycle")
+        trigger_id = trigger.get("request_id") if trigger else None
+        already_consumed = (
+            trigger_id is not None
+            and state.get("last_manual_trigger_id") == trigger_id
+        )
+
+        if push_resume:
+            # Consume the one-shot command durably before any network request.
+            state["last_manual_trigger_id"] = trigger_id
+            MANUAL_TRIGGER_PATH.unlink(missing_ok=True)
+            persist_state(
+                state,
+                f"Consume manual resume command {trigger_id}",
+                extra_paths=[MANUAL_TRIGGER_PATH],
+            )
+
+        if already_consumed:
+            print(f"MANUAL RESUME IGNORED: command {trigger_id} was already consumed.")
+            return 0
         if not cycle:
             print("MANUAL RESUME BLOCKED: there is no active previous-day cycle.")
             return 0
         if not manual_resume_allowed(now, cycle):
-            print("MANUAL RESUME BLOCKED: only an active fetching cycle may be resumed on the following Tehran calendar day, before 07:30.")
+            print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
             return 0
-        print(f"MANUAL RESUME ENABLED: continuing only active cycle {cycle.get('market_date')}; no new cycle can start.")
+        print(
+            f"MANUAL RESUME ENABLED: continuing only active cycle "
+            f"{cycle.get('market_date')}; no new cycle can start."
+        )
     usage = state.setdefault("daily_usage", {})
     cutoff_date = (now.date() - timedelta(days=10)).isoformat()
     state["daily_usage"] = {
