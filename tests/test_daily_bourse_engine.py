@@ -86,6 +86,25 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertTrue(engine.manual_resume_allowed(self.dt(tomorrow, 1), cycle))
         self.assertFalse(engine.manual_resume_allowed(self.dt(tomorrow, 7, 30), cycle))
 
+    def test_manual_and_automatic_execution_use_separate_state_files_and_quotas(self):
+        original_path = engine.STATE_PATH
+        original_limit = engine.MAX_DAILY_REQUESTS
+        original_mode = engine.MANUAL_MODE
+        try:
+            engine.configure_execution_scope(True)
+            self.assertEqual(engine.STATE_PATH, engine.MANUAL_STATE_PATH)
+            self.assertEqual(engine.MAX_DAILY_REQUESTS, 15)
+            self.assertTrue(engine.MANUAL_MODE)
+
+            engine.configure_execution_scope(False)
+            self.assertEqual(engine.STATE_PATH, engine.AUTO_STATE_PATH)
+            self.assertEqual(engine.MAX_DAILY_REQUESTS, 85)
+            self.assertFalse(engine.MANUAL_MODE)
+        finally:
+            engine.STATE_PATH = original_path
+            engine.MAX_DAILY_REQUESTS = original_limit
+            engine.MANUAL_MODE = original_mode
+
     def test_commit_trigger_file_is_read_as_one_shot_command(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
