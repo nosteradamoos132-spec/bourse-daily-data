@@ -1600,6 +1600,64 @@ def start_new_cycle(state, now):
             attempt_api_once(state, now, stage_index)
     return True
 
+def start_manual_previous_day_cycle(state, now):
+    """Recover yesterday's missed 18:00 cycle only after an explicit manual command."""
+    deadline = datetime.combine(
+        now.date(),
+        datetime.min.time(),
+        tzinfo=TEHRAN,
+    ) + timedelta(hours=7, minutes=30)
+    if now < datetime.combine(now.date(), datetime.min.time(), tzinfo=TEHRAN) or now >= deadline:
+        print("MANUAL RECOVERY BLOCKED: this command is valid only from 00:00 through 07:29:59 Tehran.")
+        return None
+
+    previous_day = now.date() - timedelta(days=1)
+    scheduled_start = datetime.combine(
+        previous_day,
+        datetime.min.time(),
+        tzinfo=TEHRAN,
+    ).replace(hour=18)
+    market_date = jalali_date_for(scheduled_start)
+
+    last_cycle = state.get("last_cycle") or {}
+    if last_cycle.get("market_date") == market_date:
+        print(
+            f"MANUAL RECOVERY BLOCKED: a cycle for {market_date} is already closed "
+            f"with status {last_cycle.get('status')!r}."
+        )
+        return None
+
+    if not is_start_day(scheduled_start):
+        print(f"MANUAL RECOVERY BLOCKED: {market_date} was not an eligible trading day.")
+        return None
+
+    cycle = {
+        "market_date": market_date,
+        "started_at": scheduled_start.isoformat(),
+        "created_at": now.isoformat(),
+        "status": "fetching",
+        "stage_attempts": [0, 0, 0, 0, 0, 0],
+        "last_request_at": None,
+        "last_attempt": None,
+        "report_path": None,
+    }
+    existing = read_archived_report(market_date)
+    if existing is not None:
+        cycle["status"] = "pending_excel"
+        cycle["report_path"] = str(ARCHIVE_DIR / f"index-{market_date}.json")
+        print(
+            f"VALID EXISTING JSON FOUND for {market_date}; "
+            "manual recovery will repair/verify Excel only."
+        )
+
+    state["active_cycle"] = cycle
+    persist_state(state, f"Manually recover previous-day BRSAPI cycle {market_date}")
+    print(
+        f"MANUAL PREVIOUS-DAY CYCLE CREATED: {market_date}; "
+        "the normal stage, quota, duplicate, and 30-minute controls remain active."
+    )
+    return cycle
+
 def main():
     now = tehran_now()
     print(
@@ -1646,7 +1704,9 @@ def main():
             print(f"MANUAL RESUME IGNORED: command {trigger_id} was already consumed.")
             return 0
         if not cycle:
-            print("MANUAL RESUME BLOCKED: there is no active previous-day cycle.")
+            cycle = start_manual_previous_day_cycle(state, now)
+        if not cycle:
+            print("MANUAL RESUME BLOCKED: no eligible previous-day cycle could be recovered.")
             return 0
         if not manual_resume_allowed(now, cycle):
             print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
