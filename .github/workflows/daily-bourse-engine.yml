@@ -2,13 +2,24 @@ name: Daily BRSAPI and Excel Engine
 
 on:
   schedule:
-    - cron: "*/30 0-7,18-23 * * *"
+    - cron: "0,30 18,21,2,4,6 * * *"
+      timezone: "Asia/Tehran"
+    - cron: "0 19,22,3,5,7 * * *"
+      timezone: "Asia/Tehran"
+    - cron: "30 23 * * *"
+      timezone: "Asia/Tehran"
+    - cron: "0 0 * * *"
+      timezone: "Asia/Tehran"
+    - cron: "30 0 * * *"
+      timezone: "Asia/Tehran"
+    - cron: "30 7 * * *"
       timezone: "Asia/Tehran"
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "scripts/daily_bourse_engine.py"
+      - "tests/test_daily_bourse_engine.py"
       - ".github/workflows/daily-bourse-engine.yml"
 
 permissions:
@@ -39,7 +50,10 @@ jobs:
           python-version: "3.11"
 
       - name: Validate Python syntax
-        run: python -m py_compile scripts/daily_bourse_engine.py
+        run: python -m py_compile scripts/daily_bourse_engine.py tests/test_daily_bourse_engine.py
+
+      - name: Test Tehran schedule and calendar rules
+        run: python -m unittest discover -s tests -v
 
       - name: Run the Tehran-time engine
         env:
