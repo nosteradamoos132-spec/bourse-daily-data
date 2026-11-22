@@ -444,7 +444,7 @@ def load_records():
             print(f"SKIP INVALID REPORT {d} ({path.name}): {'; '.join(problems)}")
             continue
 
-        fingerprint = report_fingerprint(obj)
+        fingerprint = report_values_fingerprint(obj)
         if d in found:
             if fingerprints[d] == fingerprint:
                 print(
@@ -1460,7 +1460,7 @@ def attempt_api_once(state, now, stage_index):
     # same-date report is authoritative; never overwrite or append it twice.
     existing_report = read_archived_report(market_date)
     if existing_report is not None:
-        identical = report_fingerprint(existing_report) == report_fingerprint(data)
+        identical = report_values_fingerprint(existing_report) == report_values_fingerprint(data)
         cycle["status"] = "pending_excel"
         cycle["report_path"] = str(archive_path)
         cycle["report_validated_at"] = tehran_now().isoformat()
