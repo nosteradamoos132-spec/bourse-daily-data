@@ -831,6 +831,74 @@ def read_archived_report(expected_date):
         print(f"Existing archive cannot be read: {type(exc).__name__}: {exc}")
     return None
 
+def report_values_fingerprint(report):
+    """Market-value identity independent of the reported date and timestamp."""
+    fields = (
+        "index",
+        "index_change",
+        "index_equalWeight",
+        "index_equalWeight_change",
+        "mv",
+        "tno",
+        "tval",
+        "tvol",
+    )
+    values = []
+    for field in fields:
+        value = report.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(float(value)):
+            return None
+        values.append((field, float(value)))
+    return tuple(values)
+
+def find_duplicate_archived_report(report):
+    """
+    A response is duplicate if its report date is already archived, or if all
+    core market values exactly match a previously archived valid daily report.
+    """
+    if not isinstance(report, dict):
+        return None
+
+    response_date = canonical_date(report.get("date"))
+    if response_date:
+        same_date_path = ARCHIVE_DIR / f"index-{response_date}.json"
+        if same_date_path.is_file():
+            try:
+                archived = json.loads(same_date_path.read_text(encoding="utf-8-sig"))
+                archived_ok, _ = valid_report(archived, response_date)
+                if archived_ok:
+                    return (
+                        f"report date {response_date} already exists in "
+                        f"{same_date_path.as_posix()}"
+                    )
+            except Exception:
+                pass
+
+    response_fingerprint = report_values_fingerprint(report)
+    if response_fingerprint is None:
+        return None
+
+    for path in sorted(ARCHIVE_DIR.glob("index-*.json")):
+        try:
+            archived = json.loads(path.read_text(encoding="utf-8-sig"))
+            archived_date = canonical_date(archived.get("date"))
+            if not archived_date:
+                continue
+            archived_ok, _ = valid_report(archived, archived_date)
+            if not archived_ok:
+                continue
+            if report_values_fingerprint(archived) == response_fingerprint:
+                return (
+                    f"market values exactly match previously archived report "
+                    f"{archived_date} ({path.name})"
+                )
+        except Exception:
+            continue
+
+    return None
+
 def is_start_day(now):
     # Python weekday(): Monday=0 ... Sunday=6.
     # Iran trading days: Saturday through Wednesday.
@@ -908,6 +976,34 @@ def close_failed_cycle(state, now, reason):
     state["active_cycle"] = None
     persist_state(state, f"Close failed BRSAPI cycle {cycle.get('market_date')}")
 
+def close_duplicate_cycle(state, now, reason):
+    """End this trading-day cycle immediately without storing a new report."""
+    cycle = state.get("active_cycle")
+    if not cycle:
+        return
+
+    cycle["status"] = "duplicate"
+    cycle["closed_at"] = now.isoformat()
+    cycle["duplicate_reason"] = reason
+    state["last_cycle"] = {
+        "market_date": cycle.get("market_date"),
+        "status": "duplicate",
+        "started_at": cycle.get("started_at"),
+        "closed_at": cycle.get("closed_at"),
+        "stage_attempts": cycle.get("stage_attempts", [0] * 6),
+        "duplicate_reason": reason,
+        "new_report_registered": False,
+    }
+    state["active_cycle"] = None
+    persist_state(
+        state,
+        f"Close duplicate BRSAPI cycle {cycle.get('market_date')}",
+    )
+    print(
+        f"DUPLICATE REPORT: cycle {cycle.get('market_date')} stopped immediately. "
+        "No new JSON or Excel row was registered; no further API attempts will occur."
+    )
+
 def record_failure(state, cycle, now, result, detail, http_status=None):
     cycle["last_attempt"] = {
         "at": now.isoformat(),
@@ -946,6 +1042,10 @@ def request_brsapi(expected_date):
             data = json.loads(body.decode("utf-8-sig"))
         except Exception as exc:
             return None, None, http_status, f"invalid JSON: {type(exc).__name__}: {exc}"
+
+        duplicate_reason = find_duplicate_archived_report(data)
+        if duplicate_reason:
+            return None, None, http_status, f"DUPLICATE: {duplicate_reason}"
 
         ok, reason = valid_report(data, expected_date)
         if not ok:
@@ -1331,6 +1431,14 @@ def attempt_api_once(state, now, stage_index):
     )
 
     data, body, http_status, detail = request_brsapi(market_date)
+    if data is None and detail.startswith("DUPLICATE:"):
+        close_duplicate_cycle(
+            state,
+            tehran_now(),
+            detail.removeprefix("DUPLICATE:").strip(),
+        )
+        return
+
     if data is None:
         record_failure(
             state,
