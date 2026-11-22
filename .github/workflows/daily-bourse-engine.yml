@@ -15,6 +15,12 @@ on:
     - cron: "30 7 * * *"
       timezone: "Asia/Tehran"
   workflow_dispatch:
+    inputs:
+      resume_active_cycle:
+        description: "Continue only the active previous-day cycle (manual API request; quota and 30-minute limits still apply)"
+        required: true
+        default: false
+        type: boolean
   push:
     branches: [main]
     paths:
@@ -59,4 +65,5 @@ jobs:
         env:
           BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          MANUAL_RESUME_ACTIVE_CYCLE: ${{ inputs.resume_active_cycle }}
         run: python scripts/daily_bourse_engine.py
