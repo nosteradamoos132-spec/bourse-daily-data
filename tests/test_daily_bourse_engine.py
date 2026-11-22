@@ -76,6 +76,41 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertFalse(engine.manual_resume_allowed(self.dt(start, 23, 59), cycle))
         self.assertFalse(engine.manual_resume_allowed(self.dt(date(2026, 11, 24), 1), cycle))
 
+    def test_manual_resume_allows_pending_excel_repair_until_deadline(self):
+        start = date(2026, 11, 22)
+        tomorrow = date(2026, 11, 23)
+        cycle = {
+            "started_at": self.dt(start, 18).isoformat(),
+            "status": "pending_excel",
+        }
+        self.assertTrue(engine.manual_resume_allowed(self.dt(tomorrow, 1), cycle))
+        self.assertFalse(engine.manual_resume_allowed(self.dt(tomorrow, 7, 30), cycle))
+
+    def test_commit_trigger_file_is_read_as_one_shot_command(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
+            trigger_path.write_text(
+                json.dumps(
+                    {"action": "resume_active_cycle", "request_id": "test-unique-001"}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
+                trigger = engine.read_manual_trigger()
+            self.assertEqual(trigger["action"], "resume_active_cycle")
+            self.assertEqual(trigger["request_id"], "test-unique-001")
+
+    def test_invalid_commit_trigger_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
+            trigger_path.write_text(
+                json.dumps({"action": "unrelated", "request_id": "test-unique-002"}),
+                encoding="utf-8",
+            )
+            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    engine.read_manual_trigger()
+
     def test_manual_resume_rejects_non_fetching_cycle(self):
         cycle = {
             "started_at": self.dt(date(2026, 11, 22), 18).isoformat(),
