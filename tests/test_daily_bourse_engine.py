@@ -181,6 +181,42 @@ class TehranScheduleTests(unittest.TestCase):
 
         self.assertIsNone(reason)
 
+
+    def test_duplicate_cycle_cannot_restart_later_same_day(self):
+        now = self.dt(date(2026, 11, 22), 21, 0)
+        state = {
+            "active_cycle": None,
+            "last_cycle": {
+                "market_date": "1405-09-01",
+                "status": "duplicate",
+            },
+            "last_completed_at": None,
+        }
+        with patch.object(engine, "persist_state") as persist:
+            started = engine.start_new_cycle(state, now)
+
+        self.assertFalse(started)
+        self.assertIsNone(state["active_cycle"])
+        persist.assert_not_called()
+
+    def test_next_workday_cycle_is_not_blocked_by_rolling_24_hour_lock(self):
+        next_workday = self.dt(date(2026, 11, 23), 18, 0)
+        state = {
+            "active_cycle": None,
+            "last_cycle": {
+                "market_date": "1405-09-01",
+                "status": "completed",
+            },
+            "last_completed_at": self.dt(date(2026, 11, 22), 19, 0).isoformat(),
+        }
+        with patch.object(engine, "persist_state"):
+            with patch.object(engine, "read_archived_report", return_value=None):
+                with patch.object(engine, "stage_for_now", return_value=None):
+                    started = engine.start_new_cycle(state, next_workday)
+
+        self.assertTrue(started)
+        self.assertEqual(state["active_cycle"]["market_date"], "1405-09-02")
+
     def test_duplicate_response_closes_cycle_without_registration(self):
         now = self.dt(date(2026, 11, 22), 18, 0)
         cycle = {
