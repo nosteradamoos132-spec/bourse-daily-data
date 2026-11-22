@@ -397,8 +397,26 @@ def jalali_text(date_string, sample):
         out = out.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
     return out
 
+def report_fingerprint(report):
+    """Stable identity for one final daily report, ignoring JSON key order."""
+    fields = (
+        "date",
+        "state",
+        "time",
+        "index",
+        "index_change",
+        "index_equalWeight",
+        "index_equalWeight_change",
+        "mv",
+        "tno",
+        "tval",
+        "tvol",
+    )
+    return tuple((field, report.get(field)) for field in fields)
+
 def load_records():
     found = {}
+    fingerprints = {}
     for path in sorted(Path("archive").glob("index-*.json")):
         obj = json.loads(path.read_text(encoding="utf-8"))
         d = canonical_date(obj.get("date"))
@@ -426,8 +444,19 @@ def load_records():
             print(f"SKIP INVALID REPORT {d} ({path.name}): {'; '.join(problems)}")
             continue
 
+        fingerprint = report_fingerprint(obj)
         if d in found:
-            raise RuntimeError(f"Duplicate valid JSON archive date: {d}")
+            if fingerprints[d] == fingerprint:
+                print(
+                    f"IGNORE DUPLICATE ARCHIVE COPY: {path.name} contains "
+                    f"the same verified report for {d}."
+                )
+                continue
+            raise RuntimeError(
+                f"CONFLICTING REPORTS FOR SAME DATE {d}: archive {path.name} "
+                "has different market values. Excel update is blocked for review."
+            )
+        fingerprints[d] = fingerprint
         found[d] = {"date": d, "index": float(obj["index"]), "index_equalWeight": float(obj["index_equalWeight"]), "tval": int(obj["tval"]), "tvol": int(obj["tvol"])}
     if not found:
         raise RuntimeError("No closed-market index JSON reports found.")
@@ -1318,6 +1347,45 @@ def attempt_api_once(state, now, stage_index):
         return
 
     archive_path = ARCHIVE_DIR / f"index-{market_date}.json"
+
+    # Recheck the canonical archive after the network response. A verified
+    # same-date report is authoritative; never overwrite or append it twice.
+    existing_report = read_archived_report(market_date)
+    if existing_report is not None:
+        identical = report_fingerprint(existing_report) == report_fingerprint(data)
+        cycle["status"] = "pending_excel"
+        cycle["report_path"] = str(archive_path)
+        cycle["report_validated_at"] = tehran_now().isoformat()
+        cycle["last_attempt"] = {
+            "id": attempt_id,
+            "at": now.isoformat(),
+            "stage": STAGE_NAMES[stage_index],
+            "stage_attempt": attempt_number,
+            "result": (
+                "duplicate_report_reused"
+                if identical
+                else "same_date_archive_kept_api_payload_not_overwritten"
+            ),
+            "http_status": http_status,
+        }
+        save_state(state)
+        commit_and_push(
+            [STATE_PATH],
+            f"Reuse existing BRSAPI archive {market_date}",
+        )
+        if identical:
+            print(
+                f"DUPLICATE REPORT: {market_date} already exists with identical "
+                "content. Existing JSON is reused; no second archive row is created."
+            )
+        else:
+            print(
+                f"SAME-DATE CONFLICT: an existing verified JSON for {market_date} "
+                "is retained as authoritative; the new API payload is not written."
+            )
+        process_pending_excel(state)
+        return
+
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     archive_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
