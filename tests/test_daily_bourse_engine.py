@@ -111,6 +111,46 @@ class TehranScheduleTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "invalid structure"):
                     engine.read_manual_trigger()
 
+    def test_manual_command_can_recover_yesterday_if_schedule_never_started(self):
+        today = date(2026, 11, 23)
+        now = self.dt(today, 0, 15)
+        state = {
+            "active_cycle": None,
+            "last_cycle": None,
+            "last_completed_at": None,
+        }
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "read_archived_report", return_value=None):
+                with patch.object(engine, "persist_state") as persist:
+                    cycle = engine.start_manual_previous_day_cycle(state, now)
+
+        self.assertIsNotNone(cycle)
+        self.assertEqual(cycle["market_date"], "1405-09-01")
+        self.assertEqual(cycle["started_at"], self.dt(date(2026, 11, 22), 18).isoformat())
+        self.assertEqual(cycle["status"], "fetching")
+        persist.assert_called_once()
+
+    def test_manual_recovery_is_blocked_at_0730(self):
+        now = self.dt(date(2026, 11, 23), 7, 30)
+        state = {"active_cycle": None, "last_cycle": None}
+        with patch.object(engine, "is_start_day") as is_start_day:
+            cycle = engine.start_manual_previous_day_cycle(state, now)
+        self.assertIsNone(cycle)
+        self.assertIsNone(state["active_cycle"])
+        is_start_day.assert_not_called()
+
+    def test_manual_recovery_does_not_reopen_a_closed_previous_day(self):
+        now = self.dt(date(2026, 11, 23), 1, 0)
+        state = {
+            "active_cycle": None,
+            "last_cycle": {"market_date": "1405-09-01", "status": "duplicate"},
+        }
+        with patch.object(engine, "is_start_day") as is_start_day:
+            cycle = engine.start_manual_previous_day_cycle(state, now)
+        self.assertIsNone(cycle)
+        self.assertIsNone(state["active_cycle"])
+        is_start_day.assert_not_called()
+
     def test_manual_resume_rejects_non_fetching_cycle(self):
         cycle = {
             "started_at": self.dt(date(2026, 11, 22), 18).isoformat(),
