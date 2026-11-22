@@ -123,7 +123,7 @@ class TehranScheduleTests(unittest.TestCase):
             (archive_dir / "index-1405-09-01.json").write_text(
                 json.dumps(report, ensure_ascii=False), encoding="utf-8"
             )
-            (archive_dir / "duplicate-copy.json").write_text(
+            (archive_dir / "index-copy-1405-09-01.json").write_text(
                 json.dumps(report, ensure_ascii=False), encoding="utf-8"
             )
             previous_dir = os.getcwd()
@@ -146,7 +146,7 @@ class TehranScheduleTests(unittest.TestCase):
             (archive_dir / "index-1405-09-01.json").write_text(
                 json.dumps(first, ensure_ascii=False), encoding="utf-8"
             )
-            (archive_dir / "duplicate-copy.json").write_text(
+            (archive_dir / "index-copy-1405-09-01.json").write_text(
                 json.dumps(second, ensure_ascii=False), encoding="utf-8"
             )
             previous_dir = os.getcwd()
