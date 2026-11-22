@@ -1573,15 +1573,33 @@ def main():
         f"Jalali date: {jalali_date_for(now)}; weekday={now.strftime('%A')}"
     )
 
-    # Manual workflow_dispatch is deliberately diagnostic-only. It cannot
-    # consume BRSAPI quota or start a cycle accidentally.
-    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
-        print("DIAGNOSTIC ONLY: non-scheduled runs do not call BRSAPI.")
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+    manual_resume = (
+        event_name == "workflow_dispatch"
+        and os.environ.get("MANUAL_RESUME_ACTIVE_CYCLE", "").lower() == "true"
+    )
+
+    if event_name != "schedule" and not manual_resume:
+        print("DIAGNOSTIC ONLY: manual resume was not explicitly enabled.")
         state = load_state()
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
 
     state = load_state()
+
+    if manual_resume:
+        cycle = state.get("active_cycle")
+        if not cycle:
+            print("MANUAL RESUME BLOCKED: there is no active previous-day cycle.")
+            return 0
+        start_date = cycle_start_date(cycle)
+        if now.date() != start_date + timedelta(days=1):
+            print("MANUAL RESUME BLOCKED: manual API resume is allowed only on the calendar day after the cycle started.")
+            return 0
+        if now.hour >= 7 and (now.hour > 7 or now.minute >= 30):
+            print("MANUAL RESUME BLOCKED: the previous-day cycle deadline has passed.")
+            return 0
+        print(f"MANUAL RESUME ENABLED: continuing only active cycle {cycle.get('market_date')}; no new cycle can start.")
     usage = state.setdefault("daily_usage", {})
     cutoff_date = (now.date() - timedelta(days=10)).isoformat()
     state["daily_usage"] = {
@@ -1627,6 +1645,9 @@ def main():
             cycle = None
 
     if cycle is None:
+        if manual_resume:
+            print("MANUAL RESUME BLOCKED: active cycle is already closed; no new cycle will be started manually.")
+            return 0
         start_new_cycle(state, now)
         return 0
 
