@@ -63,6 +63,28 @@ class TehranScheduleTests(unittest.TestCase):
                     expected_stage,
                 )
 
+    def test_manual_resume_allowed_after_midnight_for_previous_cycle(self):
+        start = date(2026, 11, 22)
+        tomorrow = date(2026, 11, 23)
+        cycle = {
+            "started_at": self.dt(start, 18).isoformat(),
+            "status": "fetching",
+        }
+        self.assertTrue(engine.manual_resume_allowed(self.dt(tomorrow, 0), cycle))
+        self.assertTrue(engine.manual_resume_allowed(self.dt(tomorrow, 7, 29), cycle))
+        self.assertFalse(engine.manual_resume_allowed(self.dt(tomorrow, 7, 30), cycle))
+        self.assertFalse(engine.manual_resume_allowed(self.dt(start, 23, 59), cycle))
+        self.assertFalse(engine.manual_resume_allowed(self.dt(date(2026, 11, 24), 1), cycle))
+
+    def test_manual_resume_rejects_non_fetching_cycle(self):
+        cycle = {
+            "started_at": self.dt(date(2026, 11, 22), 18).isoformat(),
+            "status": "duplicate",
+        }
+        self.assertFalse(
+            engine.manual_resume_allowed(self.dt(date(2026, 11, 23), 1), cycle)
+        )
+
     def test_cycle_closes_after_final_0600_stage(self):
         start = date(2026, 11, 22)
         tomorrow = date(2026, 11, 23)
