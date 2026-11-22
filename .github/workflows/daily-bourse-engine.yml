@@ -1,0 +1,48 @@
+name: Daily BRSAPI and Excel Engine
+
+on:
+  schedule:
+    - cron: "*/30 0-7,18-23 * * *"
+      timezone: "Asia/Tehran"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/daily_bourse_engine.py"
+      - ".github/workflows/daily-bourse-engine.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-bourse-engine
+  cancel-in-progress: false
+
+jobs:
+  run-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use the main branch for durable state commits
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python syntax
+        run: python -m py_compile scripts/daily_bourse_engine.py
+
+      - name: Run the Tehran-time engine
+        env:
+          BRSAPI_KEY: \${{ secrets.BRSAPI_KEY }}
+          GITHUB_EVENT_NAME: \${{ github.event_name }}
+        run: python scripts/daily_bourse_engine.py
