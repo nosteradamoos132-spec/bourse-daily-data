@@ -121,8 +121,10 @@ class TehranScheduleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             archive_dir = Path(temp_dir) / "archive"
             archive_dir.mkdir()
+            duplicate_copy = dict(report)
+            duplicate_copy["time"] = "18:19:02"
             (archive_dir / "index-1405-09-01.json").write_text(
-                json.dumps(report, ensure_ascii=False), encoding="utf-8"
+                json.dumps(duplicate_copy, ensure_ascii=False), encoding="utf-8"
             )
             (archive_dir / "index-copy-1405-09-01.json").write_text(
                 json.dumps(report, ensure_ascii=False), encoding="utf-8"
