@@ -1524,20 +1524,18 @@ def start_new_cycle(state, now):
     if now.hour < 18:
         return False
 
-    last_completed = parse_dt(state.get("last_completed_at"))
-    if last_completed is not None:
-        next_allowed = last_completed + timedelta(hours=24)
-        if now < next_allowed:
-            print(
-                f"24-HOUR LOCK: next complete report is not allowed before "
-                f"{next_allowed.isoformat()}."
-            )
-            return False
+    market_date = jalali_date_for(now)
+    last_cycle = state.get("last_cycle") or {}
+    if last_cycle.get("market_date") == market_date:
+        print(
+            f"CYCLE ALREADY CLOSED FOR {market_date}: "
+            f"status={last_cycle.get('status')!r}; no second cycle will start today."
+        )
+        return False
 
     if not is_start_day(now):
         return False
 
-    market_date = jalali_date_for(now)
     scheduled_start = now.replace(hour=18, minute=0, second=0, microsecond=0)
     cycle = {
         "market_date": market_date,
