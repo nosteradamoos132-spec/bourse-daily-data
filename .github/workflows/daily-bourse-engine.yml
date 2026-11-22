@@ -43,6 +43,6 @@ jobs:
 
       - name: Run the Tehran-time engine
         env:
-          BRSAPI_KEY: \${{ secrets.BRSAPI_KEY }}
-          GITHUB_EVENT_NAME: \${{ github.event_name }}
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python scripts/daily_bourse_engine.py
