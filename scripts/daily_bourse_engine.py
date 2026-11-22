@@ -1343,11 +1343,11 @@ def attempt_api_once(state, now, stage_index):
     process_pending_excel(state)
 
 def start_new_cycle(state, now):
-    if now.hour != 18:
+    # A missed 18:00 scheduled event may be recovered at any later scheduled
+    # tick that evening. The six-stage timetable remains anchored to 18:00.
+    if now.hour < 18:
         return False
 
-    # Start can occur at 18:00 or at 18:30 if GitHub delayed/missed the first
-    # scheduled event. There is no new-cycle start after the 18th hour.
     last_completed = parse_dt(state.get("last_completed_at"))
     if last_completed is not None:
         next_allowed = last_completed + timedelta(hours=24)
@@ -1362,9 +1362,11 @@ def start_new_cycle(state, now):
         return False
 
     market_date = jalali_date_for(now)
+    scheduled_start = now.replace(hour=18, minute=0, second=0, microsecond=0)
     cycle = {
         "market_date": market_date,
-        "started_at": now.isoformat(),
+        "started_at": scheduled_start.isoformat(),
+        "created_at": now.isoformat(),
         "status": "fetching",
         "stage_attempts": [0, 0, 0, 0, 0, 0],
         "last_request_at": None,
