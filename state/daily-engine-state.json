@@ -3,5 +3,7 @@
   "active_cycle": null,
   "last_completed_at": null,
   "last_cycle": null,
-  "daily_usage": {}
+  "daily_usage": {
+    "2026-11-22": 171
+  }
 }
