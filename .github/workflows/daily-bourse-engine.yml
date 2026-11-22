@@ -27,6 +27,7 @@ on:
       - "scripts/daily_bourse_engine.py"
       - "tests/test_daily_bourse_engine.py"
       - ".github/workflows/daily-bourse-engine.yml"
+      - "state/manual-resume-trigger.json"
 
 permissions:
   contents: write
