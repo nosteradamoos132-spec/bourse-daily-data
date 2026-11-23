@@ -1076,9 +1076,10 @@ def request_brsapi(expected_date):
         except Exception as exc:
             return None, None, http_status, f"invalid JSON: {type(exc).__name__}: {exc}"
 
-        duplicate_reason = find_duplicate_archived_report(data)
-        if duplicate_reason:
-            return None, None, http_status, f"DUPLICATE: {duplicate_reason}"
+        if not MANUAL_MODE:
+            duplicate_reason = find_duplicate_archived_report(data)
+            if duplicate_reason:
+                return None, None, http_status, f"DUPLICATE: {duplicate_reason}"
 
         ok, reason = valid_report(data, expected_date)
         if not ok:
@@ -1489,10 +1490,10 @@ def attempt_api_once(state, now, stage_index):
 
     archive_path = ARCHIVE_DIR / f"index-{market_date}.json"
 
-    # Recheck the canonical archive after the network response. A verified
-    # same-date report is authoritative; never overwrite or append it twice.
+    # Automatic execution preserves a verified same-date archive. Manual
+    # execution has priority: its freshly validated API payload replaces it.
     existing_report = read_archived_report(market_date)
-    if existing_report is not None:
+    if existing_report is not None and not MANUAL_MODE:
         identical = report_values_fingerprint(existing_report) == report_values_fingerprint(data)
         cycle["status"] = "pending_excel"
         cycle["report_path"] = str(archive_path)
@@ -1721,7 +1722,7 @@ def start_manual_previous_day_cycle(state, now):
         "report_path": None,
     }
     existing = read_archived_report(market_date)
-    if existing is not None:
+    if existing is not None and not MANUAL_MODE:
         cycle["status"] = "pending_excel"
         cycle["report_path"] = str(ARCHIVE_DIR / f"index-{market_date}.json")
         print(
@@ -1745,14 +1746,6 @@ def start_manual_current_day_cycle(state, now):
         return None
 
     market_date = jalali_date_for(now)
-    last_cycle = state.get("last_cycle") or {}
-    if last_cycle.get("market_date") == market_date:
-        print(
-            f"MANUAL START BLOCKED: today's cycle {market_date} is already closed "
-            f"with status {last_cycle.get('status')!r}."
-        )
-        return None
-
     if not is_start_day(now):
         print(f"MANUAL START BLOCKED: {market_date} is not an eligible trading day.")
         return None
@@ -1769,7 +1762,7 @@ def start_manual_current_day_cycle(state, now):
         "manual_current_day": True,
     }
     existing = read_archived_report(market_date)
-    if existing is not None:
+    if existing is not None and not MANUAL_MODE:
         cycle["status"] = "pending_excel"
         cycle["report_path"] = str(ARCHIVE_DIR / f"index-{market_date}.json")
         print(
@@ -1842,6 +1835,17 @@ def main():
                 ):
                     print("MANUAL START BLOCKED: another manual cycle is already active or today's manual cycle is closed.")
                     return 1
+                if cycle.get("status") == "pending_excel":
+                    cycle["status"] = "fetching"
+                    cycle["stage_attempts"] = [0, 0, 0, 0, 0, 0]
+                    cycle["last_request_at"] = None
+                    cycle["last_attempt"] = None
+                    cycle["report_path"] = None
+                    cycle["manual_current_day"] = True
+                    persist_state(
+                        state,
+                        f"Manually refresh current-day BRSAPI report {today_market_date}",
+                    )
             else:
                 cycle = start_manual_current_day_cycle(state, now)
             if not cycle:
@@ -1874,7 +1878,7 @@ def main():
 
     # If a complete JSON has already been archived, lock out BRSAPI and finish
     # the workbook phase, even if an earlier run stopped between these steps.
-    if cycle and cycle.get("status") == "fetching":
+    if cycle and cycle.get("status") == "fetching" and not MANUAL_MODE:
         archived = read_archived_report(cycle.get("market_date"))
         if archived is not None:
             cycle["status"] = "pending_excel"
