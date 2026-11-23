@@ -168,6 +168,43 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertEqual(engine.stage_for_now(now, engine.cycle_start_date(cycle)), 2)
         persist.assert_called_once()
 
+    def test_scheduled_main_uses_automatic_recovery_after_midnight(self):
+        now = self.dt(date(2026, 11, 23), 0, 15)
+        cycle = {
+            "market_date": "1405-09-01",
+            "started_at": self.dt(date(2026, 11, 22), 18).isoformat(),
+            "status": "fetching",
+            "stage_attempts": [0, 0, 0, 0, 0, 0],
+            "last_request_at": None,
+        }
+        state = {
+            "active_cycle": None,
+            "last_cycle": None,
+            "last_completed_at": None,
+            "daily_usage": {},
+        }
+
+        def recover(state_arg, now_arg):
+            state_arg["active_cycle"] = cycle
+            return cycle
+
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule"}):
+            with patch.object(engine, "tehran_now", return_value=now):
+                with patch.object(engine, "configure_execution_scope"):
+                    with patch.object(engine, "load_state", return_value=state):
+                        with patch.object(
+                            engine,
+                            "recover_automatic_previous_day_cycle",
+                            side_effect=recover,
+                        ) as recovery:
+                            with patch.object(engine, "stage_for_now", return_value=2):
+                                with patch.object(engine, "attempt_api_once", return_value=False) as attempt:
+                                    result = engine.main()
+
+        self.assertEqual(result, 1)
+        recovery.assert_called_once_with(state, now)
+        attempt.assert_called_once_with(state, now, 2)
+
     def test_automatic_recovery_records_missed_cycle_after_0730(self):
         now = self.dt(date(2026, 11, 23), 7, 30)
         state = {"active_cycle": None, "last_cycle": None}
