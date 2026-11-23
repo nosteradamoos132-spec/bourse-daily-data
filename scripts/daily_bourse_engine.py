@@ -972,6 +972,13 @@ def manual_resume_allowed(now, cycle):
     ) + timedelta(hours=7, minutes=30)
     return now.date() == start_date + timedelta(days=1) and now < deadline
 
+def manual_push_is_authorized(trigger, commit_message):
+    """Accept a manual command only from its matching, explicitly named commit."""
+    if trigger is None or not isinstance(commit_message, str):
+        return False
+    expected = f"MANUAL-BRSAPI-COMMAND {trigger.get('request_id', '')}"
+    return bool(trigger.get("request_id")) and commit_message.splitlines()[0].strip() == expected
+
 def read_manual_trigger():
     if not MANUAL_TRIGGER_PATH.is_file():
         return None
@@ -1787,12 +1794,16 @@ def main():
     )
 
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-    dispatch_resume = (
-        event_name == "workflow_dispatch"
-        and os.environ.get("MANUAL_RESUME_ACTIVE_CYCLE", "").lower() == "true"
-    )
+    dispatch_resume = False
     trigger = read_manual_trigger() if event_name == "push" else None
-    push_resume = trigger is not None
+    push_commit_message = os.environ.get("GITHUB_HEAD_COMMIT_MESSAGE", "")
+    push_resume = (
+        event_name == "push"
+        and manual_push_is_authorized(trigger, push_commit_message)
+    )
+    if trigger is not None and not push_resume:
+        print("MANUAL COMMAND IGNORED: this push does not carry the matching explicit command commit.")
+        trigger = None
     push_start_current = push_resume and trigger.get("action") == "start_current_cycle"
     manual_resume = dispatch_resume or push_resume
     configure_execution_scope(manual_resume)
