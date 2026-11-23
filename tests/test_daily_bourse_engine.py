@@ -501,6 +501,21 @@ if __name__ == "__main__":
 
 
 class ManualCurrentDayStartTests(unittest.TestCase):
+    def sample_report(self):
+        return {
+            "date": "1405-09-02",
+            "time": "18:04:47",
+            "state": "بسته",
+            "index": 100000.0,
+            "index_change": 100.0,
+            "index_equalWeight": 50000.0,
+            "index_equalWeight_change": 50.0,
+            "mv": 1000.0,
+            "tno": 2000.0,
+            "tval": 3000.0,
+            "tvol": 4000.0,
+        }
+
     def dt(self, day, hour, minute=0):
         return datetime(
             day.year,
@@ -565,6 +580,23 @@ class ManualCurrentDayStartTests(unittest.TestCase):
                     cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
         self.assertEqual(cycle["status"], "fetching")
         self.assertIsNone(cycle["report_path"])
+
+    def test_manual_command_requires_matching_explicit_commit_message(self):
+        trigger = {"action": "start_current_cycle", "request_id": "manual-now-001"}
+        self.assertTrue(
+            engine.manual_push_is_authorized(
+                trigger, "MANUAL-BRSAPI-COMMAND manual-now-001"
+            )
+        )
+        self.assertFalse(
+            engine.manual_push_is_authorized(trigger, "ordinary code update")
+        )
+        self.assertFalse(
+            engine.manual_push_is_authorized(
+                trigger, "MANUAL-BRSAPI-COMMAND another-request"
+            )
+        )
+        self.assertFalse(engine.manual_push_is_authorized(None, "MANUAL-BRSAPI-COMMAND manual-now-001"))
 
     def test_commit_trigger_accepts_immediate_current_day_action(self):
         with tempfile.TemporaryDirectory() as temp_dir:
