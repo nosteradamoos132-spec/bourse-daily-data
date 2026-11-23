@@ -877,48 +877,28 @@ def report_values_fingerprint(report):
     return tuple(values)
 
 def find_duplicate_archived_report(report):
-    """
-    A response is duplicate if its report date is already archived, or if all
-    core market values exactly match a previously archived valid daily report.
-    """
+    """A report is duplicate only when its own market date is already archived."""
     if not isinstance(report, dict):
         return None
 
     response_date = canonical_date(report.get("date"))
-    if response_date:
-        same_date_path = ARCHIVE_DIR / f"index-{response_date}.json"
-        if same_date_path.is_file():
-            try:
-                archived = json.loads(same_date_path.read_text(encoding="utf-8-sig"))
-                archived_ok, _ = valid_report(archived, response_date)
-                if archived_ok:
-                    return (
-                        f"report date {response_date} already exists in "
-                        f"{same_date_path.as_posix()}"
-                    )
-            except Exception:
-                pass
-
-    response_fingerprint = report_values_fingerprint(report)
-    if response_fingerprint is None:
+    if not response_date:
         return None
 
-    for path in sorted(ARCHIVE_DIR.glob("index-*.json")):
-        try:
-            archived = json.loads(path.read_text(encoding="utf-8-sig"))
-            archived_date = canonical_date(archived.get("date"))
-            if not archived_date:
-                continue
-            archived_ok, _ = valid_report(archived, archived_date)
-            if not archived_ok:
-                continue
-            if report_values_fingerprint(archived) == response_fingerprint:
-                return (
-                    f"market values exactly match previously archived report "
-                    f"{archived_date} ({path.name})"
-                )
-        except Exception:
-            continue
+    same_date_path = ARCHIVE_DIR / f"index-{response_date}.json"
+    if not same_date_path.is_file():
+        return None
+
+    try:
+        archived = json.loads(same_date_path.read_text(encoding="utf-8-sig"))
+        archived_ok, _ = valid_report(archived, response_date)
+        if archived_ok:
+            return (
+                f"report date {response_date} already exists in "
+                f"{same_date_path.as_posix()}"
+            )
+    except Exception:
+        return None
 
     return None
 
@@ -1453,7 +1433,7 @@ def attempt_api_once(state, now, stage_index):
             f"DAILY LIMIT REACHED: {used_today}/{MAX_DAILY_REQUESTS} "
             f"requests on Tehran date {today_key}; no request sent."
         )
-        return
+        return False
 
     if not os.environ.get("BRSAPI_KEY", "").strip():
         raise RuntimeError("Missing GitHub Actions secret BRSAPI_KEY.")
@@ -1490,7 +1470,7 @@ def attempt_api_once(state, now, stage_index):
             tehran_now(),
             detail.removeprefix("DUPLICATE:").strip(),
         )
-        return
+        return False
 
     if data is None:
         record_failure(
@@ -1505,7 +1485,7 @@ def attempt_api_once(state, now, stage_index):
             f"BRSAPI attempt failed: HTTP={http_status}; {detail}. "
             "The next scheduled attempt follows the 30-minute rule."
         )
-        return
+        return False
 
     archive_path = ARCHIVE_DIR / f"index-{market_date}.json"
 
@@ -1544,8 +1524,7 @@ def attempt_api_once(state, now, stage_index):
                 f"SAME-DATE CONFLICT: an existing verified JSON for {market_date} "
                 "is retained as authoritative; the new API payload is not written."
             )
-        process_pending_excel(state)
-        return
+        return process_pending_excel(state)
 
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     archive_path.write_text(
@@ -1569,7 +1548,7 @@ def attempt_api_once(state, now, stage_index):
         f"Archive complete BRSAPI report {market_date}",
     )
     print(f"VALID JSON SAVED: {archive_path}")
-    process_pending_excel(state)
+    return process_pending_excel(state)
 
 def start_new_cycle(state, now):
     # A missed 18:00 scheduled event may be recovered at any later scheduled
@@ -1611,13 +1590,94 @@ def start_new_cycle(state, now):
         )
     persist_state(state, f"Start daily BRSAPI cycle {market_date}")
 
-    if cycle["status"] == "pending_excel":
-        process_pending_excel(state)
-    else:
-        stage_index = stage_for_now(now, cycle_start_date(cycle))
-        if stage_index is not None:
-            attempt_api_once(state, now, stage_index)
     return True
+
+
+def recover_automatic_previous_day_cycle(state, now):
+    """Recover a missed automatic cycle during its remaining overnight window.
+
+    Returns the created cycle, None when no eligible recovery applies, or False
+    when the recovery deadline has passed and a trading day was missed.
+    """
+    if now.hour >= 18:
+        return None
+
+    previous_day = now.date() - timedelta(days=1)
+    scheduled_start = datetime.combine(
+        previous_day,
+        datetime.min.time(),
+        tzinfo=TEHRAN,
+    ).replace(hour=18)
+    market_date = jalali_date_for(scheduled_start)
+
+    if not is_start_day(scheduled_start):
+        print(f"AUTOMATIC RECOVERY: {market_date} was not an eligible trading day.")
+        return None
+
+    last_cycle = state.get("last_cycle") or {}
+    if last_cycle.get("market_date") == market_date:
+        print(
+            f"AUTOMATIC RECOVERY: {market_date} was already closed with "
+            f"status {last_cycle.get('status')!r}."
+        )
+        return False if last_cycle.get("status") == "failed" else None
+
+    deadline = datetime.combine(
+        now.date(),
+        datetime.min.time(),
+        tzinfo=TEHRAN,
+    ) + timedelta(hours=7, minutes=30)
+
+    if now >= deadline:
+        closed_at = now.isoformat()
+        state["last_cycle"] = {
+            "market_date": market_date,
+            "status": "failed",
+            "started_at": scheduled_start.isoformat(),
+            "closed_at": closed_at,
+            "stage_attempts": [0, 0, 0, 0, 0, 0],
+            "failure_reason": (
+                "The automatic cycle was not started and its 07:30 Tehran "
+                "recovery deadline has passed."
+            ),
+        }
+        persist_state(
+            state,
+            f"Record missed automatic BRSAPI cycle {market_date}",
+        )
+        print(
+            f"AUTOMATIC CYCLE MISSED: {market_date}; recovery deadline "
+            "07:30 Tehran has passed. No API request was sent."
+        )
+        return False
+
+    cycle = {
+        "market_date": market_date,
+        "started_at": scheduled_start.isoformat(),
+        "created_at": now.isoformat(),
+        "status": "fetching",
+        "stage_attempts": [0, 0, 0, 0, 0, 0],
+        "last_request_at": None,
+        "last_attempt": None,
+        "report_path": None,
+    }
+    existing = read_archived_report(market_date)
+    if existing is not None:
+        cycle["status"] = "pending_excel"
+        cycle["report_path"] = str(ARCHIVE_DIR / f"index-{market_date}.json")
+        print(
+            f"VALID EXISTING JSON FOUND for {market_date}; "
+            "automatic recovery will repair/verify Excel only."
+        )
+
+    state["active_cycle"] = cycle
+    persist_state(state, f"Automatically recover missed BRSAPI cycle {market_date}")
+    print(
+        f"AUTOMATIC PREVIOUS-DAY CYCLE RECOVERED: {market_date}; "
+        "continuing with the original overnight retry timetable."
+    )
+    return cycle
+
 
 def start_manual_previous_day_cycle(state, now):
     """Recover yesterday's missed 18:00 cycle in the isolated manual state file."""
@@ -1760,8 +1820,7 @@ def main():
 
     cycle = state.get("active_cycle")
     if cycle and cycle.get("status") == "pending_excel":
-        process_pending_excel(state)
-        return 0
+        return 0 if process_pending_excel(state) else 1
 
     cycle = state.get("active_cycle")
     if cycle:
@@ -1778,14 +1837,26 @@ def main():
                 now,
                 "No complete JSON and verified workbook by 07:30 Tehran.",
             )
-            cycle = None
+            return 1
 
     if cycle is None:
         if manual_resume:
             print("MANUAL RESUME BLOCKED: active cycle is already closed; no new cycle will be started manually.")
-            return 0
-        start_new_cycle(state, now)
-        return 0
+            return 1
+        if now.hour < 18:
+            recovered = recover_automatic_previous_day_cycle(state, now)
+            if recovered is False:
+                return 1
+            if recovered is None:
+                return 0
+            cycle = state.get("active_cycle")
+        else:
+            if not start_new_cycle(state, now):
+                return 0
+            cycle = state.get("active_cycle")
+
+        if cycle and cycle.get("status") == "pending_excel":
+            return 0 if process_pending_excel(state) else 1
 
     cycle = state.get("active_cycle")
     if not cycle or cycle.get("status") != "fetching":
@@ -1796,8 +1867,8 @@ def main():
         print("No API request is due at this Tehran time.")
         return 0
 
-    attempt_api_once(state, now, stage_index)
-    return 0
+    result = attempt_api_once(state, now, stage_index)
+    return 1 if result is False else 0
 
 if __name__ == "__main__":
     try:
