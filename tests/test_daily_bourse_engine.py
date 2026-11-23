@@ -149,6 +149,49 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertEqual(cycle["status"], "fetching")
         persist.assert_called_once()
 
+    def test_automatic_recovery_restores_previous_trading_day_cycle(self):
+        now = self.dt(date(2026, 11, 23), 0, 15)
+        state = {
+            "active_cycle": None,
+            "last_cycle": None,
+            "last_completed_at": None,
+        }
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "read_archived_report", return_value=None):
+                with patch.object(engine, "persist_state") as persist:
+                    cycle = engine.recover_automatic_previous_day_cycle(state, now)
+
+        self.assertIsNotNone(cycle)
+        self.assertEqual(cycle["market_date"], "1405-09-01")
+        self.assertEqual(cycle["started_at"], self.dt(date(2026, 11, 22), 18).isoformat())
+        self.assertEqual(cycle["status"], "fetching")
+        self.assertEqual(engine.stage_for_now(now, engine.cycle_start_date(cycle)), 2)
+        persist.assert_called_once()
+
+    def test_automatic_recovery_records_missed_cycle_after_0730(self):
+        now = self.dt(date(2026, 11, 23), 7, 30)
+        state = {"active_cycle": None, "last_cycle": None}
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "persist_state") as persist:
+                result = engine.recover_automatic_previous_day_cycle(state, now)
+
+        self.assertIs(result, False)
+        self.assertIsNone(state["active_cycle"])
+        self.assertEqual(state["last_cycle"]["market_date"], "1405-09-01")
+        self.assertEqual(state["last_cycle"]["status"], "failed")
+        persist.assert_called_once()
+
+    def test_automatic_recovery_skips_previous_nontrading_day(self):
+        now = self.dt(date(2026, 11, 28), 0, 15)
+        state = {"active_cycle": None, "last_cycle": None}
+        with patch.object(engine, "is_start_day", return_value=False):
+            with patch.object(engine, "persist_state") as persist:
+                result = engine.recover_automatic_previous_day_cycle(state, now)
+
+        self.assertIsNone(result)
+        self.assertIsNone(state["active_cycle"])
+        persist.assert_not_called()
+
     def test_manual_recovery_is_blocked_at_0730(self):
         now = self.dt(date(2026, 11, 23), 7, 30)
         state = {"active_cycle": None, "last_cycle": None}
@@ -269,7 +312,7 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertIsNotNone(reason)
         self.assertIn("already exists", reason)
 
-    def test_identical_market_values_on_another_date_are_duplicate(self):
+    def test_identical_market_values_on_another_date_are_not_duplicate(self):
         archived = self.sample_report("1405-08-30")
         incoming = self.sample_report("1405-09-01")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -280,8 +323,7 @@ class TehranScheduleTests(unittest.TestCase):
             with patch.object(engine, "ARCHIVE_DIR", archive_dir):
                 reason = engine.find_duplicate_archived_report(incoming)
 
-        self.assertIsNotNone(reason)
-        self.assertIn("exactly match", reason)
+        self.assertIsNone(reason)
 
     def test_new_market_values_are_not_duplicate(self):
         archived = self.sample_report("1405-08-30")
