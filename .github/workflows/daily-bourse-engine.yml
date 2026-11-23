@@ -1,19 +1,6 @@
 name: Daily BRSAPI and Excel Engine
 
 on:
-  schedule:
-    - cron: "0,30 18,21,2,4,6 * * *"
-      timezone: "Asia/Tehran"
-    - cron: "0 19,22,3,5,7 * * *"
-      timezone: "Asia/Tehran"
-    - cron: "30 23 * * *"
-      timezone: "Asia/Tehran"
-    - cron: "0 0 * * *"
-      timezone: "Asia/Tehran"
-    - cron: "30 0 * * *"
-      timezone: "Asia/Tehran"
-    - cron: "30 7 * * *"
-      timezone: "Asia/Tehran"
   issue_comment:
     types: [created]
 
@@ -27,13 +14,10 @@ concurrency:
 jobs:
   run-engine:
     if: >-
-      github.event_name == 'schedule' ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.number == 1 &&
-        github.event.comment.user.login == 'nosteradamoos132-spec' &&
-        startsWith(github.event.comment.body, '/assistant-manual-bourse ')
-      )
+      github.event_name == 'issue_comment' &&
+      github.event.issue.number == 1 &&
+      github.event.comment.user.login == 'nosteradamoos132-spec' &&
+      startsWith(github.event.comment.body, '/assistant-manual-bourse ')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
