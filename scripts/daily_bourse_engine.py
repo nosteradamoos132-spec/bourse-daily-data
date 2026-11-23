@@ -783,7 +783,7 @@ def commit_and_push(paths, message):
     # The workflow checks out the main branch explicitly. Rebase only if another
     # legitimate repository commit arrived while this job was running.
     try:
-        git("pull", "--rebase", "origin", "main")
+        git("pull", "--rebase", "--autostash", "origin", "main")
     except subprocess.CalledProcessError:
         subprocess.run(["git", "rebase", "--abort"], check=False)
         raise
