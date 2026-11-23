@@ -683,7 +683,8 @@ AUTO_STATE_PATH = Path("state/daily-engine-state.json")
 MANUAL_STATE_PATH = Path("state/daily-engine-manual-state.json")
 STATE_PATH = AUTO_STATE_PATH
 MANUAL_MODE = False
-MANUAL_TRIGGER_PATH = Path("state/manual-resume-trigger.json")
+MANUAL_COMMAND_ISSUE_NUMBER = "1"
+MANUAL_COMMAND_ACTOR = "nosteradamoos132-spec"
 ARCHIVE_DIR = Path("archive")
 WORKBOOK_PATH = Path("archive/داده‌های روزانه بازار.xlsx")
 MAX_DAILY_REQUESTS = 85
@@ -972,30 +973,25 @@ def manual_resume_allowed(now, cycle):
     ) + timedelta(hours=7, minutes=30)
     return now.date() == start_date + timedelta(days=1) and now < deadline
 
-def manual_push_is_authorized(trigger, commit_message):
-    """Accept a manual command only from its matching, explicitly named commit."""
-    if trigger is None or not isinstance(commit_message, str):
-        return False
-    expected = f"MANUAL-BRSAPI-COMMAND {trigger.get('request_id', '')}"
-    return bool(trigger.get("request_id")) and commit_message.splitlines()[0].strip() == expected
-
-def read_manual_trigger():
-    if not MANUAL_TRIGGER_PATH.is_file():
+def parse_manual_command(event_name, actor, issue_number, body):
+    """Accept manual execution only from the dedicated assistant command issue."""
+    if event_name != "issue_comment":
         return None
-    try:
-        payload = json.loads(MANUAL_TRIGGER_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(
-            f"Manual resume trigger is not valid JSON: {type(exc).__name__}: {exc}"
-        ) from exc
-    if (
-        not isinstance(payload, dict)
-        or payload.get("action") not in {"resume_active_cycle", "start_current_cycle"}
-        or not isinstance(payload.get("request_id"), str)
-        or not payload["request_id"].strip()
-    ):
-        raise RuntimeError("Manual trigger has an invalid structure.")
-    return payload
+    if actor != MANUAL_COMMAND_ACTOR:
+        return None
+    if str(issue_number) != MANUAL_COMMAND_ISSUE_NUMBER:
+        return None
+    if not isinstance(body, str):
+        return None
+
+    match = re.fullmatch(
+        r"/assistant-manual-bourse (resume_active_cycle|start_current_cycle) ([A-Za-z0-9-]{12,80})",
+        body.strip(),
+    )
+    if not match:
+        return None
+
+    return {"action": match.group(1), "request_id": match.group(2)}
 
 def close_failed_cycle(state, now, reason):
     cycle = state.get("active_cycle")
@@ -1794,22 +1790,18 @@ def main():
     )
 
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-    dispatch_resume = False
-    trigger = read_manual_trigger() if event_name == "push" else None
-    push_commit_message = os.environ.get("GITHUB_HEAD_COMMIT_MESSAGE", "")
-    push_resume = (
-        event_name == "push"
-        and manual_push_is_authorized(trigger, push_commit_message)
+    command = parse_manual_command(
+        event_name,
+        os.environ.get("MANUAL_ACTOR", ""),
+        os.environ.get("MANUAL_ISSUE_NUMBER", ""),
+        os.environ.get("MANUAL_COMMAND", ""),
     )
-    if trigger is not None and not push_resume:
-        print("MANUAL COMMAND IGNORED: this push does not carry the matching explicit command commit.")
-        trigger = None
-    push_start_current = push_resume and trigger.get("action") == "start_current_cycle"
-    manual_resume = dispatch_resume or push_resume
+    manual_resume = command is not None
+    manual_action = command["action"] if command else None
     configure_execution_scope(manual_resume)
 
     if event_name != "schedule" and not manual_resume:
-        print("DIAGNOSTIC ONLY: no explicit manual-resume command was supplied.")
+        print("DIAGNOSTIC ONLY: manual execution requires a valid assistant command on the dedicated GitHub issue.")
         state = load_state()
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
@@ -1818,26 +1810,18 @@ def main():
 
     if manual_resume:
         cycle = state.get("active_cycle")
-        trigger_id = trigger.get("request_id") if trigger else None
-        already_consumed = (
-            trigger_id is not None
-            and state.get("last_manual_trigger_id") == trigger_id
-        )
-
-        if push_resume:
-            # Consume the one-shot command durably before any network request.
-            state["last_manual_trigger_id"] = trigger_id
-            MANUAL_TRIGGER_PATH.unlink(missing_ok=True)
-            persist_state(
-                state,
-                f"Consume manual resume command {trigger_id}",
-                extra_paths=[MANUAL_TRIGGER_PATH],
-            )
+        trigger_id = command["request_id"]
+        already_consumed = state.get("last_manual_trigger_id") == trigger_id
 
         if already_consumed:
             print(f"MANUAL COMMAND IGNORED: command {trigger_id} was already consumed.")
             return 0
-        if push_start_current:
+
+        # Consume the one-time issue command durably before any network request.
+        state["last_manual_trigger_id"] = trigger_id
+        persist_state(state, f"Consume manual resume command {trigger_id}")
+
+        if manual_action == "start_current_cycle":
             today_market_date = jalali_date_for(now)
             if cycle:
                 if (
