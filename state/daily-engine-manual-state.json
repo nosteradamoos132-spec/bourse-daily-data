@@ -7,14 +7,21 @@
     "status": "fetching",
     "stage_attempts": [
       0,
-      0,
+      1,
       0,
       0,
       0,
       0
     ],
-    "last_request_at": null,
-    "last_attempt": null,
+    "last_request_at": "2026-11-23T23:03:04.105779+03:30",
+    "last_attempt": {
+      "id": "1405-09-02-stage-2-attempt-1",
+      "at": "2026-11-23T23:03:04.105779+03:30",
+      "stage": "21:00",
+      "stage_attempt": 1,
+      "result": "request_started",
+      "http_status": null
+    },
     "report_path": null,
     "manual_current_day": true
   },
@@ -36,7 +43,7 @@
     "workbook_path": "archive/داده‌های روزانه بازار.xlsx"
   },
   "daily_usage": {
-    "2026-11-23": 2
+    "2026-11-23": 3
   },
   "last_manual_trigger_id": "manual-20261123-finaltest1"
 }
