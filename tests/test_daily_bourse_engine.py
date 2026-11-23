@@ -561,10 +561,11 @@ class ManualCurrentDayStartTests(unittest.TestCase):
             "active_cycle": None,
             "last_cycle": {"market_date": "1405-09-02", "status": "completed"},
         }
-        with patch.object(engine, "is_start_day", return_value=True):
-            with patch.object(engine, "read_archived_report", return_value=self.sample_report()):
-                with patch.object(engine, "persist_state"):
-                    cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
+        with patch.object(engine, "MANUAL_MODE", True):
+            with patch.object(engine, "is_start_day", return_value=True):
+                with patch.object(engine, "read_archived_report", return_value=self.sample_report()):
+                    with patch.object(engine, "persist_state"):
+                        cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
         self.assertIsNotNone(cycle)
         self.assertEqual(cycle["status"], "fetching")
         self.assertTrue(cycle["manual_current_day"])
@@ -574,10 +575,11 @@ class ManualCurrentDayStartTests(unittest.TestCase):
         today = date(2026, 11, 23)
         state = {"active_cycle": None, "last_cycle": None}
         existing = self.sample_report()
-        with patch.object(engine, "is_start_day", return_value=True):
-            with patch.object(engine, "read_archived_report", return_value=existing):
-                with patch.object(engine, "persist_state"):
-                    cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
+        with patch.object(engine, "MANUAL_MODE", True):
+            with patch.object(engine, "is_start_day", return_value=True):
+                with patch.object(engine, "read_archived_report", return_value=existing):
+                    with patch.object(engine, "persist_state"):
+                        cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
         self.assertEqual(cycle["status"], "fetching")
         self.assertIsNone(cycle["report_path"])
 
