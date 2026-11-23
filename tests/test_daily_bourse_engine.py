@@ -497,3 +497,71 @@ class TehranScheduleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class ManualCurrentDayStartTests(unittest.TestCase):
+    def dt(self, day, hour, minute=0):
+        return datetime(
+            day.year,
+            day.month,
+            day.day,
+            hour,
+            minute,
+            tzinfo=engine.TEHRAN,
+        )
+
+    def test_manual_current_day_cycle_starts_after_market_close(self):
+        today = date(2026, 11, 23)
+        now = self.dt(today, 18, 19)
+        state = {
+            "active_cycle": None,
+            "last_cycle": None,
+            "last_completed_at": None,
+        }
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "read_archived_report", return_value=None):
+                with patch.object(engine, "persist_state") as persist:
+                    cycle = engine.start_manual_current_day_cycle(state, now)
+
+        self.assertIsNotNone(cycle)
+        self.assertEqual(cycle["market_date"], "1405-09-02")
+        self.assertEqual(cycle["started_at"], self.dt(today, 18).isoformat())
+        self.assertEqual(cycle["status"], "fetching")
+        self.assertTrue(cycle["manual_current_day"])
+        persist.assert_called_once()
+
+    def test_manual_current_day_cycle_is_blocked_before_1800(self):
+        today = date(2026, 11, 23)
+        state = {"active_cycle": None, "last_cycle": None}
+        with patch.object(engine, "is_start_day") as is_start_day:
+            cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 17, 59))
+        self.assertIsNone(cycle)
+        self.assertIsNone(state["active_cycle"])
+        is_start_day.assert_not_called()
+
+    def test_manual_current_day_cycle_does_not_reopen_closed_date(self):
+        today = date(2026, 11, 23)
+        state = {
+            "active_cycle": None,
+            "last_cycle": {"market_date": "1405-09-02", "status": "failed"},
+        }
+        with patch.object(engine, "is_start_day") as is_start_day:
+            cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
+        self.assertIsNone(cycle)
+        self.assertIsNone(state["active_cycle"])
+        is_start_day.assert_not_called()
+
+    def test_commit_trigger_accepts_immediate_current_day_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
+            trigger_path.write_text(
+                json.dumps(
+                    {"action": "start_current_cycle", "request_id": "manual-now-001"}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
+                trigger = engine.read_manual_trigger()
+        self.assertEqual(trigger["action"], "start_current_cycle")
+        self.assertEqual(trigger["request_id"], "manual-now-001")
