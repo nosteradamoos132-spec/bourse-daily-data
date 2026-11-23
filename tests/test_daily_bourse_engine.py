@@ -105,31 +105,6 @@ class TehranScheduleTests(unittest.TestCase):
             engine.MAX_DAILY_REQUESTS = original_limit
             engine.MANUAL_MODE = original_mode
 
-    def test_commit_trigger_file_is_read_as_one_shot_command(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
-            trigger_path.write_text(
-                json.dumps(
-                    {"action": "resume_active_cycle", "request_id": "test-unique-001"}
-                ),
-                encoding="utf-8",
-            )
-            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
-                trigger = engine.read_manual_trigger()
-            self.assertEqual(trigger["action"], "resume_active_cycle")
-            self.assertEqual(trigger["request_id"], "test-unique-001")
-
-    def test_invalid_commit_trigger_file_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
-            trigger_path.write_text(
-                json.dumps({"action": "unrelated", "request_id": "test-unique-002"}),
-                encoding="utf-8",
-            )
-            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
-                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
-                    engine.read_manual_trigger()
-
     def test_manual_command_can_recover_yesterday_if_schedule_never_started(self):
         today = date(2026, 11, 23)
         now = self.dt(today, 0, 15)
@@ -583,36 +558,57 @@ class ManualCurrentDayStartTests(unittest.TestCase):
         self.assertEqual(cycle["status"], "fetching")
         self.assertIsNone(cycle["report_path"])
 
-    def test_manual_command_requires_matching_explicit_commit_message(self):
-        trigger = {"action": "start_current_cycle", "request_id": "manual-now-001"}
-        self.assertTrue(
-            engine.manual_push_is_authorized(
-                trigger, "MANUAL-BRSAPI-COMMAND manual-now-001"
-            )
+    def test_manual_command_accepts_only_dedicated_issue_comment(self):
+        command = "/assistant-manual-bourse start_current_cycle manual-20261123-001"
+        parsed = engine.parse_manual_command(
+            "issue_comment", "nosteradamoos132-spec", "1", command
         )
-        self.assertFalse(
-            engine.manual_push_is_authorized(trigger, "ordinary code update")
+        self.assertEqual(
+            parsed,
+            {
+                "action": "start_current_cycle",
+                "request_id": "manual-20261123-001",
+            },
         )
-        self.assertFalse(
-            engine.manual_push_is_authorized(
-                trigger, "MANUAL-BRSAPI-COMMAND another-request"
-            )
-        )
-        self.assertFalse(engine.manual_push_is_authorized(None, "MANUAL-BRSAPI-COMMAND manual-now-001"))
 
-    def test_commit_trigger_accepts_immediate_current_day_action(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            trigger_path = Path(temp_dir) / "manual-resume-trigger.json"
-            trigger_path.write_text(
-                json.dumps(
-                    {"action": "start_current_cycle", "request_id": "manual-now-001"}
-                ),
-                encoding="utf-8",
+    def test_push_never_authorizes_manual_execution(self):
+        command = "/assistant-manual-bourse start_current_cycle manual-20261123-001"
+        self.assertIsNone(
+            engine.parse_manual_command(
+                "push", "nosteradamoos132-spec", "1", command
             )
-            with patch.object(engine, "MANUAL_TRIGGER_PATH", trigger_path):
-                trigger = engine.read_manual_trigger()
-        self.assertEqual(trigger["action"], "start_current_cycle")
-        self.assertEqual(trigger["request_id"], "manual-now-001")
+        )
+
+    def test_manual_command_rejects_wrong_actor_or_issue(self):
+        command = "/assistant-manual-bourse resume_active_cycle manual-20261123-002"
+        self.assertIsNone(
+            engine.parse_manual_command(
+                "issue_comment", "someone-else", "1", command
+            )
+        )
+        self.assertIsNone(
+            engine.parse_manual_command(
+                "issue_comment", "nosteradamoos132-spec", "2", command
+            )
+        )
+
+    def test_manual_command_rejects_malformed_or_unknown_action(self):
+        self.assertIsNone(
+            engine.parse_manual_command(
+                "issue_comment",
+                "nosteradamoos132-spec",
+                "1",
+                "/assistant-manual-bourse delete_all manual-20261123-003",
+            )
+        )
+        self.assertIsNone(
+            engine.parse_manual_command(
+                "issue_comment",
+                "nosteradamoos132-spec",
+                "1",
+                "/assistant-manual-bourse resume_active_cycle short",
+            )
+        )
 
 class ManualOverwriteTests(unittest.TestCase):
     def dt(self):
