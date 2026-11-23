@@ -1788,10 +1788,10 @@ def main():
             cycle = start_manual_previous_day_cycle(state, now)
         if not cycle:
             print("MANUAL RESUME BLOCKED: no eligible previous-day cycle could be recovered.")
-            return 0
+            return 1
         if not manual_resume_allowed(now, cycle):
             print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
-            return 0
+            return 1
         print(
             f"MANUAL RESUME ENABLED: continuing only isolated manual cycle "
             f"{cycle.get('market_date')}; automatic state and schedule are untouched."
