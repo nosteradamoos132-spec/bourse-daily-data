@@ -540,17 +540,31 @@ class ManualCurrentDayStartTests(unittest.TestCase):
         self.assertIsNone(state["active_cycle"])
         is_start_day.assert_not_called()
 
-    def test_manual_current_day_cycle_does_not_reopen_closed_date(self):
+    def test_manual_current_day_cycle_can_reopen_closed_date(self):
         today = date(2026, 11, 23)
         state = {
             "active_cycle": None,
-            "last_cycle": {"market_date": "1405-09-02", "status": "failed"},
+            "last_cycle": {"market_date": "1405-09-02", "status": "completed"},
         }
-        with patch.object(engine, "is_start_day") as is_start_day:
-            cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
-        self.assertIsNone(cycle)
-        self.assertIsNone(state["active_cycle"])
-        is_start_day.assert_not_called()
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "read_archived_report", return_value=self.sample_report()):
+                with patch.object(engine, "persist_state"):
+                    cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
+        self.assertIsNotNone(cycle)
+        self.assertEqual(cycle["status"], "fetching")
+        self.assertTrue(cycle["manual_current_day"])
+
+    
+    def test_manual_current_day_existing_report_does_not_skip_api_cycle(self):
+        today = date(2026, 11, 23)
+        state = {"active_cycle": None, "last_cycle": None}
+        existing = self.sample_report()
+        with patch.object(engine, "is_start_day", return_value=True):
+            with patch.object(engine, "read_archived_report", return_value=existing):
+                with patch.object(engine, "persist_state"):
+                    cycle = engine.start_manual_current_day_cycle(state, self.dt(today, 18, 19))
+        self.assertEqual(cycle["status"], "fetching")
+        self.assertIsNone(cycle["report_path"])
 
     def test_commit_trigger_accepts_immediate_current_day_action(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -565,3 +579,80 @@ class ManualCurrentDayStartTests(unittest.TestCase):
                 trigger = engine.read_manual_trigger()
         self.assertEqual(trigger["action"], "start_current_cycle")
         self.assertEqual(trigger["request_id"], "manual-now-001")
+
+class ManualOverwriteTests(unittest.TestCase):
+    def dt(self):
+        return datetime(2026, 11, 23, 18, 30, tzinfo=engine.TEHRAN)
+
+    def report(self, value):
+        return {
+            "date": "1405-09-02",
+            "time": "18:30:00",
+            "state": "بسته",
+            "index": 100000.0 + value,
+            "index_change": 100.0,
+            "index_equalWeight": 50000.0 + value,
+            "index_equalWeight_change": 50.0,
+            "mv": 1000.0,
+            "tno": 2000.0,
+            "tval": 3000.0 + value,
+            "tvol": 4000.0 + value,
+        }
+
+    def make_state(self):
+        now = self.dt()
+        return {
+            "schema_version": 1,
+            "active_cycle": {
+                "market_date": "1405-09-02",
+                "started_at": now.isoformat(),
+                "status": "fetching",
+                "stage_attempts": [0, 0, 0, 0, 0, 0],
+                "last_request_at": None,
+            },
+            "last_completed_at": None,
+            "last_cycle": None,
+            "daily_usage": {},
+        }
+
+    def test_automatic_execution_preserves_existing_json(self):
+        old = self.report(1)
+        new = self.report(2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive = Path(temp_dir)
+            path = archive / "index-1405-09-02.json"
+            path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+            state = self.make_state()
+            with patch.object(engine, "ARCHIVE_DIR", archive):
+                with patch.object(engine, "MANUAL_MODE", False):
+                    with patch.dict(os.environ, {"BRSAPI_KEY": "test-key"}):
+                        with patch.object(engine, "persist_state"):
+                            with patch.object(engine, "request_brsapi", return_value=(new, b"{}", 200, "valid")):
+                                with patch.object(engine, "commit_and_push"):
+                                    with patch.object(engine, "process_pending_excel", return_value=True):
+                                        engine.attempt_api_once(state, self.dt(), 0)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["tval"], old["tval"])
+
+    def test_manual_execution_replaces_existing_json_with_new_api_report(self):
+        old = self.report(1)
+        new = self.report(2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive = Path(temp_dir)
+            path = archive / "index-1405-09-02.json"
+            path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+            state = self.make_state()
+            with patch.object(engine, "ARCHIVE_DIR", archive):
+                with patch.object(engine, "MANUAL_MODE", True):
+                    with patch.dict(os.environ, {"BRSAPI_KEY": "test-key"}):
+                        with patch.object(engine, "persist_state"):
+                            with patch.object(engine, "request_brsapi", return_value=(new, b"{}", 200, "valid")):
+                                with patch.object(engine, "commit_and_push") as commit:
+                                    with patch.object(engine, "process_pending_excel", return_value=True) as excel:
+                                        engine.attempt_api_once(state, self.dt(), 0)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["tval"], new["tval"])
+            self.assertEqual(saved["tvol"], new["tvol"])
+            commit.assert_called_once()
+            excel.assert_called_once_with(state)
+
