@@ -375,6 +375,36 @@ class TehranScheduleTests(unittest.TestCase):
         self.assertTrue(started)
         self.assertEqual(state["active_cycle"]["market_date"], "1405-09-02")
 
+    def test_failed_api_attempt_returns_failure_status(self):
+        now = self.dt(date(2026, 11, 22), 18, 0)
+        cycle = {
+            "market_date": "1405-09-01",
+            "started_at": now.isoformat(),
+            "status": "fetching",
+            "stage_attempts": [0, 0, 0, 0, 0, 0],
+            "last_request_at": None,
+        }
+        state = {
+            "schema_version": 1,
+            "active_cycle": cycle,
+            "last_completed_at": None,
+            "last_cycle": None,
+            "daily_usage": {},
+        }
+        with patch.dict(os.environ, {"BRSAPI_KEY": "test-key"}):
+            with patch.object(engine, "persist_state"):
+                with patch.object(engine, "tehran_now", return_value=now):
+                    with patch.object(
+                        engine,
+                        "request_brsapi",
+                        return_value=(None, None, 503, "temporary API failure"),
+                    ):
+                        result = engine.attempt_api_once(state, now, 0)
+
+        self.assertIs(result, False)
+        self.assertEqual(cycle["stage_attempts"][0], 1)
+        self.assertEqual(cycle["last_attempt"]["result"], "failed_or_invalid")
+
     def test_duplicate_response_closes_cycle_without_registration(self):
         now = self.dt(date(2026, 11, 22), 18, 0)
         cycle = {
