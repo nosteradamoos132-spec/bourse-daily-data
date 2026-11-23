@@ -983,11 +983,11 @@ def read_manual_trigger():
         ) from exc
     if (
         not isinstance(payload, dict)
-        or payload.get("action") != "resume_active_cycle"
+        or payload.get("action") not in {"resume_active_cycle", "start_current_cycle"}
         or not isinstance(payload.get("request_id"), str)
         or not payload["request_id"].strip()
     ):
-        raise RuntimeError("Manual resume trigger has an invalid structure.")
+        raise RuntimeError("Manual trigger has an invalid structure.")
     return payload
 
 def close_failed_cycle(state, now, reason):
@@ -1738,6 +1738,54 @@ def start_manual_previous_day_cycle(state, now):
     )
     return cycle
 
+def start_manual_current_day_cycle(state, now):
+    """Start today's eligible market cycle immediately in isolated manual state."""
+    if now.hour < 18:
+        print("MANUAL START BLOCKED: current-day fetch is allowed only from 18:00 Tehran.")
+        return None
+
+    market_date = jalali_date_for(now)
+    last_cycle = state.get("last_cycle") or {}
+    if last_cycle.get("market_date") == market_date:
+        print(
+            f"MANUAL START BLOCKED: today's cycle {market_date} is already closed "
+            f"with status {last_cycle.get('status')!r}."
+        )
+        return None
+
+    if not is_start_day(now):
+        print(f"MANUAL START BLOCKED: {market_date} is not an eligible trading day.")
+        return None
+
+    cycle = {
+        "market_date": market_date,
+        "started_at": now.replace(hour=18, minute=0, second=0, microsecond=0).isoformat(),
+        "created_at": now.isoformat(),
+        "status": "fetching",
+        "stage_attempts": [0, 0, 0, 0, 0, 0],
+        "last_request_at": None,
+        "last_attempt": None,
+        "report_path": None,
+        "manual_current_day": True,
+    }
+    existing = read_archived_report(market_date)
+    if existing is not None:
+        cycle["status"] = "pending_excel"
+        cycle["report_path"] = str(ARCHIVE_DIR / f"index-{market_date}.json")
+        print(
+            f"VALID EXISTING JSON FOUND for {market_date}; "
+            "skip BRSAPI and repair/verify Excel only."
+        )
+
+    state["active_cycle"] = cycle
+    persist_state(state, f"Manually start current-day BRSAPI cycle {market_date}")
+    print(
+        f"MANUAL CURRENT-DAY CYCLE STARTED: {market_date}; "
+        "isolated manual state, manual quota cap, and 30-minute controls remain active."
+    )
+    return cycle
+
+
 def main():
     now = tehran_now()
     print(
@@ -1752,6 +1800,7 @@ def main():
     )
     trigger = read_manual_trigger() if event_name == "push" else None
     push_resume = trigger is not None
+    push_start_current = push_resume and trigger.get("action") == "start_current_cycle"
     manual_resume = dispatch_resume or push_resume
     configure_execution_scope(manual_resume)
 
@@ -1782,20 +1831,39 @@ def main():
             )
 
         if already_consumed:
-            print(f"MANUAL RESUME IGNORED: command {trigger_id} was already consumed.")
+            print(f"MANUAL COMMAND IGNORED: command {trigger_id} was already consumed.")
             return 0
-        if not cycle:
-            cycle = start_manual_previous_day_cycle(state, now)
-        if not cycle:
-            print("MANUAL RESUME BLOCKED: no eligible previous-day cycle could be recovered.")
-            return 1
-        if not manual_resume_allowed(now, cycle):
-            print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
-            return 1
-        print(
-            f"MANUAL RESUME ENABLED: continuing only isolated manual cycle "
-            f"{cycle.get('market_date')}; automatic state and schedule are untouched."
-        )
+        if push_start_current:
+            today_market_date = jalali_date_for(now)
+            if cycle:
+                if (
+                    cycle.get("market_date") != today_market_date
+                    or cycle.get("status") not in {"fetching", "pending_excel"}
+                ):
+                    print("MANUAL START BLOCKED: another manual cycle is already active or today's manual cycle is closed.")
+                    return 1
+            else:
+                cycle = start_manual_current_day_cycle(state, now)
+            if not cycle:
+                print("MANUAL START BLOCKED: today's cycle could not be started.")
+                return 1
+            print(
+                f"MANUAL CURRENT-DAY MODE: processing isolated manual cycle "
+                f"{cycle.get('market_date')}; automatic state and schedule are untouched."
+            )
+        else:
+            if not cycle:
+                cycle = start_manual_previous_day_cycle(state, now)
+            if not cycle:
+                print("MANUAL RESUME BLOCKED: no eligible previous-day cycle could be recovered.")
+                return 1
+            if not manual_resume_allowed(now, cycle):
+                print("MANUAL RESUME BLOCKED: only an active previous-day cycle may be resumed before 07:30 Tehran.")
+                return 1
+            print(
+                f"MANUAL RESUME ENABLED: continuing only isolated manual cycle "
+                f"{cycle.get('market_date')}; automatic state and schedule are untouched."
+            )
     usage = state.setdefault("daily_usage", {})
     cutoff_date = (now.date() - timedelta(days=10)).isoformat()
     state["daily_usage"] = {
