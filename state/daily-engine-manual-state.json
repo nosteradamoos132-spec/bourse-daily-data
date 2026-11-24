@@ -24,7 +24,9 @@
     },
     "report_path": "archive/index-1405-09-03.json",
     "manual_current_day": true,
-    "report_validated_at": "2026-11-24T19:21:59.474888+03:30"
+    "report_validated_at": "2026-11-24T19:21:59.474888+03:30",
+    "last_excel_verified_at": "2026-11-24T19:22:00.878674+03:30",
+    "last_excel_error": null
   },
   "last_completed_at": null,
   "last_cycle": null,
