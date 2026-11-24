@@ -6,20 +6,29 @@
     "created_at": "2026-11-24T19:21:53.276494+03:30",
     "status": "fetching",
     "stage_attempts": [
-      0,
+      1,
       0,
       0,
       0,
       0,
       0
     ],
-    "last_request_at": null,
-    "last_attempt": null,
+    "last_request_at": "2026-11-24T19:21:53.276494+03:30",
+    "last_attempt": {
+      "id": "1405-09-03-stage-1-attempt-1",
+      "at": "2026-11-24T19:21:53.276494+03:30",
+      "stage": "18:00",
+      "stage_attempt": 1,
+      "result": "request_started",
+      "http_status": null
+    },
     "report_path": null,
     "manual_current_day": true
   },
   "last_completed_at": null,
   "last_cycle": null,
-  "daily_usage": {},
+  "daily_usage": {
+    "2026-11-24": 1
+  },
   "last_manual_trigger_id": "manual-20261124-1920-01"
 }
