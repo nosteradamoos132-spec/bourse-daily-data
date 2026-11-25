@@ -4,7 +4,7 @@
     "market_date": "1405-09-04",
     "started_at": "2026-11-25T18:00:00+03:30",
     "created_at": "2026-11-25T22:09:38.670007+03:30",
-    "status": "fetching",
+    "status": "pending_excel",
     "stage_attempts": [
       0,
       1,
@@ -19,11 +19,12 @@
       "at": "2026-11-25T22:09:38.670007+03:30",
       "stage": "21:00",
       "stage_attempt": 1,
-      "result": "request_started",
-      "http_status": null
+      "result": "valid_json_archived",
+      "http_status": 200
     },
-    "report_path": null,
-    "manual_current_day": true
+    "report_path": "archive/index-1405-09-04.json",
+    "manual_current_day": true,
+    "report_validated_at": "2026-11-25T22:09:46.436597+03:30"
   },
   "last_completed_at": "2026-11-24T19:22:02.399659+03:30",
   "last_cycle": {
