@@ -1,6 +1,23 @@
 {
   "schema_version": 1,
-  "active_cycle": null,
+  "active_cycle": {
+    "market_date": "1405-09-04",
+    "started_at": "2026-11-25T18:00:00+03:30",
+    "created_at": "2026-11-25T22:09:38.670007+03:30",
+    "status": "fetching",
+    "stage_attempts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_request_at": null,
+    "last_attempt": null,
+    "report_path": null,
+    "manual_current_day": true
+  },
   "last_completed_at": "2026-11-24T19:22:02.399659+03:30",
   "last_cycle": {
     "market_date": "1405-09-03",
