@@ -1,48 +1,21 @@
 {
   "schema_version": 1,
-  "active_cycle": {
-    "market_date": "1405-09-04",
-    "started_at": "2026-11-25T18:00:00+03:30",
-    "created_at": "2026-11-25T22:09:38.670007+03:30",
-    "status": "pending_excel",
-    "stage_attempts": [
-      0,
-      1,
-      0,
-      0,
-      0,
-      0
-    ],
-    "last_request_at": "2026-11-25T22:09:38.670007+03:30",
-    "last_attempt": {
-      "id": "1405-09-04-stage-2-attempt-1",
-      "at": "2026-11-25T22:09:38.670007+03:30",
-      "stage": "21:00",
-      "stage_attempt": 1,
-      "result": "valid_json_archived",
-      "http_status": 200
-    },
-    "report_path": "archive/index-1405-09-04.json",
-    "manual_current_day": true,
-    "report_validated_at": "2026-11-25T22:09:46.436597+03:30",
-    "last_excel_verified_at": "2026-11-25T22:09:48.732543+03:30",
-    "last_excel_error": null
-  },
-  "last_completed_at": "2026-11-24T19:22:02.399659+03:30",
+  "active_cycle": null,
+  "last_completed_at": "2026-11-25T22:09:50.730942+03:30",
   "last_cycle": {
-    "market_date": "1405-09-03",
+    "market_date": "1405-09-04",
     "status": "completed",
-    "started_at": "2026-11-24T18:00:00+03:30",
-    "completed_at": "2026-11-24T19:22:02.399659+03:30",
+    "started_at": "2026-11-25T18:00:00+03:30",
+    "completed_at": "2026-11-25T22:09:50.730942+03:30",
     "stage_attempts": [
-      1,
       0,
+      1,
       0,
       0,
       0,
       0
     ],
-    "report_path": "archive/index-1405-09-03.json",
+    "report_path": "archive/index-1405-09-04.json",
     "workbook_path": "archive/داده‌های روزانه بازار.xlsx"
   },
   "daily_usage": {
